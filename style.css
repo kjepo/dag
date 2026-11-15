@@ -569,6 +569,7 @@ body.legend-bottom #status { bottom: 50px; }
   background: none;
 }
 #toolbar #menu button:hover { background: #f3f5f7; }
+#toolbar #menu button:disabled { color: #b6bcc4; background: none; cursor: default; }
 #menu kbd {
   margin-left: auto;
   font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;

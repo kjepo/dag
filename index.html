@@ -40,6 +40,9 @@
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
       <div id="menu" role="menu" hidden>
+        <button id="undo" type="button" role="menuitem" disabled>Undo <kbd>⌘/Ctrl Z</kbd></button>
+        <button id="redo" type="button" role="menuitem" disabled>Redo <kbd>⇧⌘Z · Ctrl Y</kbd></button>
+        <hr>
         <button id="direction-menu" type="button" role="menuitem" class="narrow-only">Switch to vertical layout</button>
         <button id="reset-order" type="button" role="menuitem">Reset box order</button>
         <hr>
@@ -98,6 +101,7 @@
 
       <h3>Saving</h3>
       <ul>
+        <li><b>Undo</b> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd>) and <b>Redo</b> (<kbd>⇧</kbd><kbd>⌘</kbd>+<kbd>Z</kbd> or <kbd>Ctrl</kbd>+<kbd>Y</kbd>), also in the ☰ menu, step back and forth through every change since the page was opened, including New and Open. While you are typing in a field, those keys undo the typing instead.</li>
         <li>The graph is saved in this browser automatically after every change.</li>
         <li>In the ☰ menu: <b>Save as…</b> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>S</kbd>) saves it as a file under a name you choose (in Chrome and Edge also in a folder you choose; other browsers put it in Downloads). The name is suggested again next time; <b>Open…</b> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>O</kbd>) loads one; <b>New</b> starts over.</li>
         <li><b>Share link</b> copies a link that contains the whole graph. Whoever opens it sees a snapshot of the graph as it is now; later edits need a new link. The graph is in the part after <code>#</code>, which is never sent to the server.</li>

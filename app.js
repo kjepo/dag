@@ -870,18 +870,75 @@ $(function () {
   }
 
   // Called after every edit: re-layout and autosave to the browser.
-  function changed() {
+  // opts.coalesce: a key for edits that come in a stream (typing a name or notes);
+  // quick successive edits with the same key become one undo step.
+  function changed(opts = {}) {
     updateShowDates();
     updateHiddenEdges();
     updateConflicts();
     updateMovable();
     layout();
     if (selectedId) fillProps();
-    saveLocal();
+    const json = saveLocal();
+    recordHistory(json, opts.coalesce);
   }
   function saveLocal() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serialize())); } catch (_) { /* storage unavailable */ }
+    const json = JSON.stringify(serialize());
+    try { localStorage.setItem(STORAGE_KEY, json); } catch (_) { /* storage unavailable */ }
+    return json;
   }
+
+  // ---------------------------------------------------------------- undo / redo
+  // Snapshots of the graph (the same JSON as the autosave) after every change.
+  const HISTORY_MAX = 200;
+  const undoHistory = { states: [], index: -1, lastKey: null, lastTime: 0 };
+  let restoring = false;
+
+  function recordHistory(json, key) {
+    if (restoring || undoHistory.states[undoHistory.index] === json) return;
+    const now = Date.now();
+    const atEnd = undoHistory.index === undoHistory.states.length - 1;
+    if (key && key === undoHistory.lastKey && atEnd && undoHistory.index > 0 && now - undoHistory.lastTime < 1500) {
+      undoHistory.states[undoHistory.index] = json;          // still typing: same step
+    } else {
+      undoHistory.states.splice(undoHistory.index + 1);      // a new change drops what could be redone
+      undoHistory.states.push(json);
+      if (undoHistory.states.length > HISTORY_MAX) undoHistory.states.shift();
+      undoHistory.index = undoHistory.states.length - 1;
+    }
+    undoHistory.lastKey = key || null;
+    undoHistory.lastTime = now;
+    updateUndoButtons();
+  }
+
+  function updateUndoButtons() {
+    $('#undo').prop('disabled', undoHistory.index <= 0);
+    $('#redo').prop('disabled', undoHistory.index >= undoHistory.states.length - 1);
+  }
+
+  // Put the graph back to a snapshot; boxes slide from where they are now.
+  function restoreState(json) {
+    const sel = selectedId;
+    const prev = new Map([...tasks].map(([id, t]) => [id, { x: t.x, y: t.y }]));
+    if (pending) cancelPending();
+    restoring = true;
+    try { loadGraph(JSON.parse(json), { keepView: true, prev }); } finally { restoring = false; }
+    undoHistory.lastKey = null;
+    if (sel && tasks.has(sel)) openProps(sel);
+    updateUndoButtons();
+  }
+  function undo() {
+    if (undoHistory.index <= 0) { showStatus('Nothing to undo'); return; }
+    restoreState(undoHistory.states[--undoHistory.index]);
+    showStatus('Undone');
+  }
+  function redo() {
+    if (undoHistory.index >= undoHistory.states.length - 1) { showStatus('Nothing to redo'); return; }
+    restoreState(undoHistory.states[++undoHistory.index]);
+    showStatus('Redone');
+  }
+  $('#undo').on('click', undo);
+  $('#redo').on('click', redo);
 
   function clearGraph() {
     if (tween) { tween.stop(); tween = null; }
@@ -898,7 +955,8 @@ $(function () {
   }
 
   // Replace the current graph with `data`. Throws on malformed input.
-  function loadGraph(data) {
+  // opts.keepView: undo/redo — keep the view, and slide boxes from opts.prev positions.
+  function loadGraph(data, opts = {}) {
     if (!data || !Array.isArray(data.tasks) || !Array.isArray(data.edges)) {
       throw new Error('Not a task graph file');
     }
@@ -911,6 +969,11 @@ $(function () {
       const id = typeof t.id === 'string' && /^t\d+$/.test(t.id) && !tasks.has(t.id) ? t.id : null;
       if (!id) { skipped++; return; }
       const task = createTask({ id, name: t.name, start: t.start, duration: t.duration, end: t.end, notes: t.notes });
+      const was = opts.prev && opts.prev.get(id);
+      if (was) {   // the same box as before: move it from where it was instead of fading in
+        Object.assign(task, { x: was.x, y: was.y, o: 1, fresh: false });
+        task.$el.css({ left: was.x, top: was.y, opacity: 1 });
+      }
       if (t.pos && isFinite(t.pos.x) && isFinite(t.pos.y)) task.pinned = { x: +t.pos.x, y: +t.pos.y };
       nextId = Math.max(nextId, parseInt(id.slice(1), 10) + 1);
     });
@@ -922,8 +985,10 @@ $(function () {
       orderHints = data.order.filter(h => Array.isArray(h) && h.length === 2 &&
         tasks.has(h[0]) && tasks.has(h[1]) && h[0] !== h[1]).map(h => [h[0], h[1]]);
     }
-    userMoved = false;
-    initialView = true;   // show the loaded graph as large as fits, like the Fit button
+    if (!opts.keepView) {
+      userMoved = false;
+      initialView = true;   // show the loaded graph as large as fits, like the Fit button
+    }
     changed();
     return skipped;
   }
@@ -1011,6 +1076,14 @@ $(function () {
   $(document).on('keydown', e => {
     if (!(e.metaKey || e.ctrlKey)) return;
     const k = e.key.toLowerCase();
+    if (k === 'z' || k === 'y') {
+      // In a text field with text in it, the field's own undo comes first.
+      const el = e.target;
+      if ($(el).is('input, textarea') && !(el === $input[0] && el.value === '')) return;
+      e.preventDefault();
+      if (k === 'y' || e.shiftKey) redo(); else undo();
+      return;
+    }
     if (k === 's') { e.preventDefault(); saveToFile(); }
     else if (k === 'o') { e.preventDefault(); openFile(); }
   });
@@ -1409,14 +1482,14 @@ $(function () {
     if (!t || !v) return;
     t.name = v;
     renderTask(t);
-    changed();
+    changed({ coalesce: 'name:' + t.id });
   }).on('blur', fillProps);   // restores the name if the field was left empty
   $('#p-notes').on('input', function () {
     const t = tasks.get(selectedId);
     if (!t) return;
     t.notes = this.value;
     renderTask(t);   // the box shows a notes icon when there are notes
-    changed();
+    changed({ coalesce: 'notes:' + t.id });
   });
   $('#p-start').on('change', function () { setTiming(tasks.get(selectedId), 'start', this.value); });
   $('#p-end').on('change', function () { setTiming(tasks.get(selectedId), 'end', this.value); });
@@ -1713,6 +1786,7 @@ $(function () {
   } catch (err) {
     console.warn('Could not restore autosaved graph', err);
   }
+  if (undoHistory.index < 0) recordHistory(saveLocal());   // starting point for undo
   openFromHash();
 
   focusInput();
