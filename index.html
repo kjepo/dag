@@ -59,6 +59,7 @@
         <button id="save-as" type="button" role="menuitem">Save as… <kbd>⇧⌘/Ctrl S</kbd></button>
         <button id="share" type="button" role="menuitem">Share link</button>
         <hr>
+        <button id="wait-default" type="button" role="menuitem">Wait between tasks… <span class="menu-value">none</span></button>
         <button id="unit-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Hours and minutes</button>
         <button id="legend-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Show legend</button>
         <button id="critical-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Critical path <kbd>!</kbd></button>
@@ -85,12 +86,13 @@
         <li>An arc always runs from a box’s <b>right</b> connector to another box’s <b>left</b> connector, meaning “the left task must finish before the right one”.</li>
         <li>Dimmed connectors can’t be used: that arc would create a cycle or already exists.</li>
         <li>Cancel with <kbd>Esc</kbd>, by clicking empty canvas, or by clicking the black connector again.</li>
-        <li>Click an arc to remove it (it turns red and dashed when you hover over it).</li>
+        <li>Click an arc to set a <b>wait</b> on it or to remove it.</li>
         <li>An arc already implied by a longer path (A → B → C makes A → C redundant) is kept but not drawn.</li>
       </ul>
 
       <h3>Date conflicts</h3>
       <p>A task gets a <b class="red">red border</b> when its dates don’t work. Either it starts before a task it depends on has ended (the arc turns red too), or its own end is before its start. Hover over the box to see why. In days, a task may start the day after the tasks it depends on end, not the same day; in hours, at the very minute they end.</p>
+      <p><b>Waits.</b> Some things need time between tasks: paint has to dry, a marinade has to work. Click an arc to give it a wait, e.g. <b>2</b> (days) or <b>4h</b>; the arc shows it as <b>+2d</b> or <b>+4h</b>, and the task after it may only start once the wait is over. <b>Wait between tasks…</b> in the ☰ menu sets a wait for every arc that has none of its own (none by default); a margin of <b>1</b> day, say, or <b>15m</b> to clear up. Conflicts, suggestions, slack, Auto-schedule and Push later all count the waits.</p>
       <p>When an edit makes later tasks start too early (say a task grows from 1 to 3 days), a message offers <b>Push later</b>: each of those tasks moves later by just enough, keeping its duration, and so do the tasks after it. A task with slack absorbs the delay, so the move stops there. <b>Resolve conflicts</b> in the ☰ menu does the same at any time. A <b>locked</b> task (tick <b>Locked</b> in its properties; the box shows a 🔒) is never moved: if the push reaches it, it stays red, as a sign that something before it has to get shorter. Undo takes a push back.</p>
       <p>When a task has both a start and an end date, its duration is calculated from them, counting both days (the same start and end is 1 day). It is shown in days and weeks, e.g. <b>5d</b>, <b>3w</b> or <b>3w 1d</b>.</p>
 

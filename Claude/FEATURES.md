@@ -1,13 +1,19 @@
 # Feature ideas
 
 Candidates for the task DAG editor, roughly in order of value. Done: undo/redo, the
-critical path with slack (toggle with "!"), and auto-schedule.
+critical path with slack (toggle with "!"), auto-schedule,
+push later / resolve conflicts with locked tasks, and waits (per arc and
+for the whole graph).
 
 ## Scheduling
 
 ### Shift later tasks
 Auto-schedule (done) fills in missing times. Still to do: "shift everything
 after this task by N days/hours", for when a task runs late.
+
+### Working days
+In days mode, skip weekends (and maybe holidays) when counting durations,
+waits and "the next day", so Friday is followed by Monday.
 
 ### Gantt view
 The same graph as a timeline: bars on a date axis, arcs between them. Switch

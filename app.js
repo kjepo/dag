@@ -399,19 +399,21 @@ $(function () {
     return null;
   }
 
-  function addEdge(from, to) {
+  function addEdge(from, to, wait = null) {
     const g = document.createElementNS(SVGNS, 'g');
     g.setAttribute('class', 'edge');
     const title = document.createElementNS(SVGNS, 'title');
-    title.textContent = 'Click to remove';
+    title.textContent = 'Click to set a wait or remove the arc';
     const hit = document.createElementNS(SVGNS, 'path');
     hit.setAttribute('class', 'hit');
     const line = document.createElementNS(SVGNS, 'path');
     line.setAttribute('class', 'line');
     line.setAttribute('marker-end', 'url(#arrow)');
-    g.append(title, hit, line);
+    const label = document.createElementNS(SVGNS, 'text');
+    label.setAttribute('class', 'wait-label');
+    g.append(title, hit, line, label);
     $edgeLayer[0].appendChild(g);
-    const e = { from, to, el: g };
+    const e = { from, to, el: g, wait };
     edges.push(e);
     drawEdge(e);
     return e;
@@ -470,6 +472,16 @@ $(function () {
     const useSpline = splinesOn && e.spline && freeMoving !== e.from && freeMoving !== e.to;
     const d = useSpline ? splinePath(e.spline) : edgePath(tasks.get(e.from), tasks.get(e.to));
     for (const p of e.el.querySelectorAll('path')) p.setAttribute('d', d);
+    // An arc with its own wait shows it halfway along.
+    const label = e.el.querySelector('.wait-label');
+    if (e.wait != null) {
+      const line = e.el.querySelector('.line'), at = line.getPointAtLength(line.getTotalLength() / 2);
+      label.setAttribute('x', at.x);
+      label.setAttribute('y', at.y - 6);
+      label.textContent = '+' + waitText(parseDuration(e.wait) ?? 0);
+    } else if (label.textContent) {
+      label.textContent = '';
+    }
   }
   function drawEdges() { edges.forEach(e => { if (!e.hidden) drawEdge(e); }); }
 
@@ -520,6 +532,13 @@ $(function () {
   // How soon a task may start after one it depends on ends: the next day (days),
   // the same minute (hours).
   function NEXT() { return hourMode ? 0 : 1; }
+  // Wait between tasks, in the current unit: an arc's own (e.wait, e.g. "2d" or
+  // "240m"), or else the graph's. A task may start at the earliest
+  // end of the task before + NEXT() + wait.
+  let graphWait = null;   // "1d", "15m", or null for none
+  function waitOf(e) { return (e.wait != null ? parseDuration(e.wait) : null) ?? parseDuration(graphWait) ?? 0; }
+  function minGap(e) { return NEXT() + waitOf(e); }
+  function waitText(n) { return formatDuration(durationValue(n)).short; }
 
   // A task is in conflict when its own dates disagree, or when it is connected
   // to a task whose dates violate the dependency (the later task starts before
@@ -537,15 +556,21 @@ $(function () {
       const a = tasks.get(edge.from), b = tasks.get(edge.to);
       const aEnd = parseTime(a.end) ?? parseTime(a.start);
       const bStart = parseTime(b.start) ?? parseTime(b.end);
-      edge.conflict = aEnd != null && bStart != null && bStart < aEnd + NEXT();
+      edge.conflict = aEnd != null && bStart != null && bStart < aEnd + minGap(edge);
       edge.el.classList.toggle('conflict', edge.conflict);
       edge.el.querySelector('.line').setAttribute('marker-end', edge.conflict ? 'url(#arrow-conflict)' : 'url(#arrow)');
       if (edge.conflict) {
         const ends = displayValue(a.end || a.start), starts = displayValue(b.start || b.end);
-        problems.get(b.id).push(hourMode || bStart < aEnd ? `Starts before “${a.name}” ends (${ends})`
-                                                          : `Starts the same day “${a.name}” ends (${ends})`);
-        problems.get(a.id).push(hourMode || bStart < aEnd ? `Ends after “${b.name}” starts (${starts})`
-                                                          : `Ends the same day “${b.name}” starts (${starts})`);
+        const w = waitOf(edge);
+        if (w > 0 && bStart >= aEnd + NEXT()) {   // only the wait is missing
+          problems.get(b.id).push(`Starts too soon after “${a.name}” (ends ${ends}, then a ${waitText(w)} wait)`);
+          problems.get(a.id).push(`Ends too late for “${b.name}” (starts ${starts}, after a ${waitText(w)} wait)`);
+        } else {
+          problems.get(b.id).push(hourMode || bStart < aEnd ? `Starts before “${a.name}” ends (${ends})`
+                                                            : `Starts the same day “${a.name}” ends (${ends})`);
+          problems.get(a.id).push(hourMode || bStart < aEnd ? `Ends after “${b.name}” starts (${starts})`
+                                                            : `Ends the same day “${b.name}” starts (${starts})`);
+        }
       }
     });
 
@@ -586,15 +611,13 @@ $(function () {
   // for the tasks whose times can be worked out.
   function computeSlack() {
     const order = topoOrder();
-    const preds = id => edges.filter(e => e.to === id).map(e => e.from);
-    const succs = id => edges.filter(e => e.from === id).map(e => e.to);
     const times = new Map(), latestStart = new Map();
     order.forEach(id => {
       const t = tasks.get(id), d = parseDuration(t.duration);
       let s = parseTime(t.start), e = parseTime(t.end);
       if (s == null && e == null) {
-        const ends = preds(id).map(p => times.get(p)).filter(Boolean).map(r => r.e);
-        if (ends.length) s = Math.max(...ends) + NEXT();
+        const ends = edges.filter(x => x.to === id && times.has(x.from)).map(x => times.get(x.from).e + minGap(x));
+        if (ends.length) s = Math.max(...ends);
       }
       if (e == null && s != null) e = d != null ? s + d - INCL() : s;
       if (s == null && e != null) s = d != null ? e - d + INCL() : e;
@@ -604,14 +627,14 @@ $(function () {
     const finish = Math.max(...[...times.values()].map(r => r.e));
     [...order].reverse().forEach(id => {
       const r = times.get(id);
-      const after = succs(id).map(s => latestStart.get(s)).filter(v => v != null).map(v => v - NEXT());
+      const after = edges.filter(x => x.from === id && latestStart.has(x.to)).map(x => latestStart.get(x.to) - minGap(x));
       const lf = after.length ? Math.min(...after) : r ? finish : null;
       if (r) {
         r.latestEnd = lf;
         r.slack = lf - r.e;
         latestStart.set(id, lf - (r.e - r.s));
       } else if (lf != null) {
-        latestStart.set(id, lf + NEXT());   // times unknown: pass the constraint on to the tasks before it
+        latestStart.set(id, lf);   // times unknown: pass the constraint on to the tasks before it
       }
     });
     return { times, latestStart };
@@ -641,7 +664,7 @@ $(function () {
     edges.forEach(e => {
       const a = times.get(e.from), b = times.get(e.to);
       // The arc that sets the latest end of a critical task.
-      e.critical = !!(a && b && a.slack <= 0 && b.slack <= 0 && latestStart.get(e.to) - NEXT() === a.latestEnd);
+      e.critical = !!(a && b && a.slack <= 0 && b.slack <= 0 && latestStart.get(e.to) - minGap(e) === a.latestEnd);
       e.el.classList.toggle('critical', e.critical);
       e.el.querySelector('.line').setAttribute('marker-end',
         e.conflict ? 'url(#arrow-conflict)' : e.critical ? 'url(#arrow-critical)' : 'url(#arrow)');
@@ -659,7 +682,7 @@ $(function () {
 
   function updateHiddenEdges() {
     edges.forEach(e => {
-      e.hidden = isTransitive(e);
+      e.hidden = e.wait == null && isTransitive(e);   // an arc with its own wait always shows
       e.el.style.display = e.hidden ? 'none' : '';
     });
   }
@@ -1039,13 +1062,14 @@ $(function () {
       version: 1,
       layout: vertical ? 'vertical' : 'horizontal',
       timeUnit: hourMode ? 'hour' : 'day',
+      ...(graphWait ? { wait: graphWait } : {}),
       tasks: [...tasks.values()].map(t => ({
         id: t.id, name: t.name, start: t.start, duration: t.duration, end: t.end,
         ...(t.notes ? { notes: t.notes } : {}),
         ...(t.locked ? { locked: true } : {}),
         ...(t.pinned ? { pos: { x: Math.round(t.pinned.x), y: Math.round(t.pinned.y) } } : {}),
       })),
-      edges: edges.map(e => ({ from: e.from, to: e.to })),
+      edges: edges.map(e => ({ from: e.from, to: e.to, ...(e.wait != null ? { wait: e.wait } : {}) })),
       ...(orderHints.length ? { order: orderHints.map(h => [...h]) } : {}),
     };
   }
@@ -1133,6 +1157,8 @@ $(function () {
     edges.forEach(e => e.el.remove());
     edges = [];
     orderHints = [];
+    graphWait = null;
+    updateWaitMenu();
     nextId = 1;
     $empty.show();
   }
@@ -1146,6 +1172,9 @@ $(function () {
     clearGraph();
     if (data.layout === 'vertical' || data.layout === 'horizontal') setVertical(data.layout === 'vertical');
     setHourMode(data.timeUnit === 'hour');   // files without it are in days
+    const validWait = w => typeof w === 'string' && parseDuration(w) != null ? durationValue(parseDuration(w)) : null;
+    graphWait = validWait(data.wait);
+    updateWaitMenu();
     let skipped = 0;
     data.tasks.forEach(t => {
       if (!t || typeof t.name !== 'string') { skipped++; return; }
@@ -1162,7 +1191,7 @@ $(function () {
     });
     data.edges.forEach(e => {
       if (!e || !tasks.has(e.from) || !tasks.has(e.to) || edgeProblem(e.from, e.to)) { skipped++; return; }
-      addEdge(e.from, e.to);
+      addEdge(e.from, e.to, validWait(e.wait));
     });
     if (Array.isArray(data.order)) {
       orderHints = data.order.filter(h => Array.isArray(h) && h.length === 2 &&
@@ -1386,7 +1415,61 @@ $(function () {
   $edgeLayer.on('click', '.edge', function (e) {
     e.stopPropagation();
     const edge = edges.find(x => x.el === this);
-    if (edge) removeEdge(edge);
+    if (edge) editArc(edge);
+  });
+
+  // Set an arc's own wait, or remove the arc. (Without SweetAlert: remove, as before.)
+  function waitHint() { return hourMode ? 'Like 30m, 2h or 1d 4h' : 'A number of days, like 2'; }
+  async function editArc(edge) {
+    if (!hasSwal) { removeEdge(edge); return; }
+    const a = tasks.get(edge.from), b = tasks.get(edge.to);
+    const def = parseDuration(graphWait) ?? 0;
+    const r = await dialog.fire({
+      titleText: `${a.name} → ${b.name}`,
+      text: `How long to wait after “${a.name}” ends before “${b.name}” can start. ` +
+            `Leave it empty to use the graph’s wait (${def ? waitText(def) : 'none'}).`,
+      input: 'text', inputValue: edge.wait != null ? String(durationInput(parseDuration(edge.wait) ?? 0)) : '',
+      inputPlaceholder: def ? waitText(def) : 'No wait',
+      inputAttributes: { autocomplete: 'off' },
+      showCancelButton: true, showDenyButton: true,
+      confirmButtonText: 'Save', denyButtonText: 'Remove arc', denyButtonColor: '#cf222e',
+      inputValidator: v => !v.trim() || parseDuration(v) != null ? null : waitHint(),
+    });
+    if (r.isDenied) { removeEdge(edge); return; }
+    if (!r.isConfirmed || !edges.includes(edge)) return;
+    const v = r.value.trim();
+    const wait = v ? durationValue(parseDuration(v)) : null;
+    if (wait === edge.wait) return;
+    edge.wait = wait;
+    drawEdge(edge);
+    changed();
+  }
+
+  // The graph's wait between tasks (menu).
+  function updateWaitMenu() {
+    const n = parseDuration(graphWait) ?? 0;
+    $('#wait-default .menu-value').text(n ? waitText(n) : 'none');
+  }
+  $('#wait-default').on('click', async () => {
+    if (!hasSwal) return;
+    const n = parseDuration(graphWait) ?? 0;
+    const r = await dialog.fire({
+      titleText: 'Wait between tasks',
+      text: 'How long a task waits after the tasks it depends on end, unless its arc has its own wait. ' +
+            (hourMode ? 'E.g. 15m to clear up between steps.' : 'E.g. 1 for a day’s margin.') + ' Empty for none.',
+      input: 'text', inputValue: n ? String(durationInput(n)) : '', inputPlaceholder: 'No wait',
+      inputAttributes: { autocomplete: 'off' },
+      showCancelButton: true, confirmButtonText: 'Save',
+      inputValidator: v => !v.trim() || parseDuration(v) != null ? null : waitHint(),
+    });
+    if (!r.isConfirmed) return;
+    const v = r.value.trim(), m = v ? parseDuration(v) : 0;
+    const wait = m ? durationValue(m) : null;
+    if (wait === graphWait) return;
+    graphWait = wait;
+    updateWaitMenu();
+    edges.forEach(drawEdge);
+    changed();
   });
 
   // Fit: as large as possible with the whole graph visible.
@@ -1486,12 +1569,28 @@ $(function () {
         end: eDay != null ? isoFromDay(eDay) : null,
         duration: d != null ? `${Math.max(1, Math.ceil(d / MIN_PER_DAY))}d` : null };
     });
+    // Waits: days -> minutes; minutes -> whole days, rounded up.
+    const convWait = w => {
+      if (w == null) return { w: null, lossy: false };
+      if (toHours) { const d = parseDays(w); return { w: d != null ? `${d * MIN_PER_DAY}m` : null, lossy: false }; }
+      const m = parseMinutes(w);
+      return m == null ? { w: null, lossy: false } : { w: `${Math.ceil(m / MIN_PER_DAY)}d`, lossy: m % MIN_PER_DAY !== 0 };
+    };
+    const waits = edges.map(e => [e, convWait(e.wait)]), gw = convWait(graphWait);
+    const lossyWaits = waits.filter(([, c]) => c.lossy).length + (gw.lossy ? 1 : 0);
     const lossy = conv.filter(c => c.lossy).length;
+    if (lossyWaits && !lossy && !await confirmAction({
+      title: 'Switch to whole days?', confirm: 'Switch',
+      text: `${lossyWaits} wait${lossyWaits === 1 ? '' : 's'} will be rounded up to whole days.`,
+    })) return;
     if (lossy && !await confirmAction({
       title: 'Switch to whole days?', confirm: 'Switch',
       text: `The times of day of ${lossy} task${lossy === 1 ? '' : 's'} will be rounded to whole days.`,
     })) return;
     setHourMode(toHours);
+    waits.forEach(([e, c]) => { e.wait = c.w; });
+    graphWait = gw.w;
+    updateWaitMenu();
     conv.forEach(({ t, start, end, duration }) => {
       t.start = start; t.end = end;
       t.duration = derivedDuration(start, end) ?? duration;
@@ -1578,6 +1677,7 @@ $(function () {
     return $('<li>').append(
       $('<button type="button" class="dep-name">').text(task.name).attr('title', 'Show this task')
         .on('click', () => openProps(task.id)),
+      waitOf(edge) > 0 ? $('<span class="dep-note">').text(`wait ${waitText(waitOf(edge))}`) : null,
       edge.hidden ? $('<span class="dep-note">').text('implied, not drawn') : null,
       $('<button type="button" class="dep-remove" aria-label="Remove dependency">×</button>')
         .attr('title', 'Remove this dependency')
@@ -1646,10 +1746,15 @@ $(function () {
   //           among the tasks that depend on it;
   //  - start from end - duration when nothing comes before it.
   function suggestTiming(t) {
-    const preds = edges.filter(e => e.to === t.id).map(e => tasks.get(e.from));
-    const succs = edges.filter(e => e.from === t.id).map(e => tasks.get(e.to));
-    const predEnds = preds.map(p => parseTime(p.end) ?? parseTime(p.start)).filter(v => v != null);
-    const succStarts = succs.map(s => parseTime(s.start) ?? parseTime(s.end)).filter(v => v != null);
+    // The earliest start each dependency allows, and the latest end each task after it allows.
+    const predEnds = edges.filter(x => x.to === t.id).map(x => {
+      const p = tasks.get(x.from), v = parseTime(p.end) ?? parseTime(p.start);
+      return v != null ? v + minGap(x) : null;
+    }).filter(v => v != null);
+    const succStarts = edges.filter(x => x.from === t.id).map(x => {
+      const n = tasks.get(x.to), v = parseTime(n.start) ?? parseTime(n.end);
+      return v != null ? v - minGap(x) : null;
+    }).filter(v => v != null);
     const d = parseDuration(t.duration);
     const s = parseTime(t.start), e = parseTime(t.end);
     const when = hourMode ? 'when' : 'the day';
@@ -1657,13 +1762,13 @@ $(function () {
     const why = [];
 
     if (s == null && predEnds.length) {
-      sugS = Math.max(...predEnds) + NEXT();
+      sugS = Math.max(...predEnds);
       why.push(hourMode ? 'start: when the tasks it depends on end' : 'start: the day after the tasks it depends on end');
     }
     if (e == null) {
       const S = s ?? sugS;
       if (S != null && d != null) { sugE = S + d - INCL(); why.push('end: start + duration'); }
-      else if (succStarts.length) { sugE = Math.min(...succStarts) - NEXT(); why.push(hourMode ? 'end: when the tasks that need it start' : 'end: the day before the tasks that need it start'); }
+      else if (succStarts.length) { sugE = Math.min(...succStarts); why.push(hourMode ? 'end: when the tasks that need it start' : 'end: the day before the tasks that need it start'); }
     }
     if (s == null && sugS == null && d != null) {
       const E = e ?? sugE;
@@ -1701,10 +1806,12 @@ $(function () {
       const t = tasks.get(id), c = cur.get(id);
       const at = c.s ?? c.e;                           // where it starts, as conflicts see it
       if (at == null) return;
-      const ends = edges.filter(x => x.to === id).map(x => { const p = cur.get(x.from); return p.e ?? p.s; })
-        .filter(v => v != null);
+      const ends = edges.filter(x => x.to === id).map(x => {
+        const p = cur.get(x.from), v = p.e ?? p.s;
+        return v != null ? v + minGap(x) : null;
+      }).filter(v => v != null);
       if (!ends.length) return;
-      const need = Math.max(...ends) + NEXT() - at;
+      const need = Math.max(...ends) - at;
       if (need <= 0) return;
       if (t.locked) { blocked.push(id); return; }
       if (c.s != null) c.s += need;
@@ -1776,9 +1883,9 @@ $(function () {
       if (s == null && e != null && d != null) s = e - d + INCL();
       if (t.locked) { if (s != null || e != null) endOf.set(id, e ?? s); else unplaced++; return; }   // never changed
       if (s == null && e == null) {
-        const ends = edges.filter(x => x.to === id).map(x => endOf.get(x.from));
+        const ends = edges.filter(x => x.to === id).map(x => endOf.has(x.from) ? endOf.get(x.from) + minGap(x) : null);
         if (ends.some(v => v == null)) s = null;           // something before it couldn't be placed
-        else if (ends.length) s = Math.max(...ends) + NEXT();
+        else if (ends.length) s = Math.max(...ends);
         else s = from;
       }
       if (s != null && e == null && d != null) e = s + d - INCL();
