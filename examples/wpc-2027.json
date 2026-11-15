@@ -1,0 +1,110 @@
+{
+  "format": "task-dag",
+  "version": 1,
+  "tasks": [
+    {
+      "id": "t1",
+      "name": "WPC 2027 opens",
+      "start": "2026-05-01",
+      "duration": "1d",
+      "end": "2026-05-01",
+      "notes": "Registration starts"
+    },
+    {
+      "id": "t2",
+      "name": "Submission open",
+      "start": "2026-07-01",
+      "duration": "112d",
+      "end": "2026-10-20",
+      "notes": "Uploading of images may begin, payments must be made by October 25th - otherwise the team is removed from the competition"
+    },
+    {
+      "id": "t3",
+      "name": "National teams entries closed",
+      "start": "2026-10-20",
+      "duration": "1d",
+      "end": "2026-10-20",
+      "notes": "National Teams entries should now be closed to allow time for the Team Captain to gather RAW images and finalise Team entry before October 31."
+    },
+    {
+      "id": "t4",
+      "name": "International Competition closes",
+      "start": "2026-10-29",
+      "duration": "1d",
+      "end": "2026-10-29",
+      "notes": "No extensions possible"
+    },
+    {
+      "id": "t5",
+      "name": "Category validation",
+      "start": "2026-10-30",
+      "duration": "5d",
+      "end": "2026-11-03",
+      "notes": "Brief category validation. Looking for obvious wrong categories/ obvious issues with rules etc. Overview process only."
+    },
+    {
+      "id": "t6",
+      "name": "Judging",
+      "start": "2026-11-01",
+      "duration": "22d",
+      "end": "2026-11-22"
+    },
+    {
+      "id": "t7",
+      "name": "Cut off date for team captains to replace images",
+      "start": "2026-11-08",
+      "duration": "1d",
+      "end": "2026-11-08",
+      "notes": "Cut off date for team captains to replace images that were challenged during the validation process."
+    },
+    {
+      "id": "t8",
+      "name": "Announce team members",
+      "start": "2026-11-09",
+      "duration": "1d",
+      "end": "2026-11-09",
+      "notes": "No images may be shown!"
+    },
+    {
+      "id": "t9",
+      "name": "Team members + images may be promoted",
+      "start": "2026-11-23",
+      "duration": "1d",
+      "end": "2026-11-23",
+      "notes": "If an image is disqualified from this point – there is no replacement available to the team. A disqualified photographer is still considered a team member"
+    },
+    {
+      "id": "t10",
+      "name": "Major validation",
+      "start": "2026-11-23",
+      "duration": "17d",
+      "end": "2026-12-09",
+      "notes": "Major validation of Top 15 images in each category"
+    },
+    {
+      "id": "t11",
+      "name": "Finalist announcement",
+      "start": "2027-01-01",
+      "duration": "1d",
+      "end": "2027-01-01",
+      "notes": "Finalist announcement made. Social Media slides available."
+    },
+    {
+      "id": "t12",
+      "name": "BON announcement",
+      "start": "2027-01-15",
+      "duration": "1d",
+      "end": "2027-01-15",
+      "notes": "Best of Nation photographer announcements made on YouTube/Facebook. Social media slides made available."
+    },
+    {
+      "id": "t13",
+      "name": "Award ceremony",
+      "start": "2027-04-24",
+      "duration": "1d",
+      "end": "2027-04-24",
+      "notes": "Award presentation in Calgary, Alberta, Canada. The WPC award show is held in conjunction with the Canadian Imaging Conference & Expo 2027"
+    }
+  ],
+  "edges": []
+}

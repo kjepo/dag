@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <title>Task DAG Editor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="canvas">
+    <div id="world">
+      <svg id="edges" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z"></path>
+          </marker>
+          <marker id="arrow-conflict" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z"></path>
+          </marker>
+        </defs>
+      </svg>
+    </div>
+    <div id="legend" hidden></div>
+    <div id="empty">Type a task name and press <kbd>Enter</kbd></div>
+  </div>
+
+  <div id="toolbar">
+    <input id="task-input" type="text" placeholder="New task… (Enter to add)" autocomplete="off" enterkeyhint="enter" autofocus>
+    <span class="group">
+      <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+      <button id="zoom-fit" type="button" title="Zoom to fit the whole graph">Fit</button>
+      <button id="zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+    </span>
+    <button id="direction" type="button" title="Switch to a top-to-bottom layout"></button>
+    <input id="file-input" type="file" accept=".json,application/json" hidden>
+    <div class="menu-wrap">
+      <button id="menu-btn" type="button" title="Menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <div id="menu" role="menu" hidden>
+        <button id="direction-menu" type="button" role="menuitem" class="narrow-only">Switch to vertical layout</button>
+        <button id="reset-order" type="button" role="menuitem">Reset box order</button>
+        <hr>
+        <button id="new" type="button" role="menuitem">New</button>
+        <button id="open" type="button" role="menuitem">Open… <kbd>⌘/Ctrl O</kbd></button>
+        <button id="save" type="button" role="menuitem">Save as… <kbd>⌘/Ctrl S</kbd></button>
+        <button id="share" type="button" role="menuitem">Share link</button>
+        <hr>
+        <button id="unit-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Hours and minutes</button>
+        <button id="legend-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Show legend</button>
+        <hr>
+        <button id="help-btn" type="button" role="menuitem">Help</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="help" hidden>
+    <div class="help-panel" role="dialog" aria-labelledby="help-title">
+      <button id="help-close" type="button" aria-label="Close help">×</button>
+      <h2 id="help-title">How to use the editor</h2>
+
+      <h3>Tasks</h3>
+      <p>Type a task name in the text field and press <kbd>Enter</kbd>. Keep typing to add the next one. The field always keeps focus. A task with both a start and an end date gets a <b>thicker border</b> and is placed after the undated tasks in its column, sorted by date.</p>
+
+      <h3>Task properties</h3>
+      <p>Click a box to edit its name, dates and notes (a box with notes shows a small note icon; hover over the name to read them), see and remove its dependencies (including ones that aren’t drawn), or delete it. Set two of start, end and duration and the third is filled in; the <b>×</b> next to one clears it. A missing start or end is suggested (in <i>purple italics</i>) from the connected tasks: the day the tasks it depends on end, and the day the tasks that need it start. Click <b>Use suggested dates</b> to keep them. Changes are applied as you make them; <b>Save task</b> (or <kbd>Enter</kbd>) confirms and closes the panel. Close with <kbd>Esc</kbd> or by clicking the background.</p>
+
+      <h3>Dependencies</h3>
+      <p>Every box has a connector on each side. Click one: it turns <b>black</b>, and the connectors on the opposite side of the other boxes turn <b class="green">green</b>. Click a green one to draw the arc.</p>
+      <ul>
+        <li>An arc always runs from a box’s <b>right</b> connector to another box’s <b>left</b> connector, meaning “the left task must finish before the right one”.</li>
+        <li>Dimmed connectors can’t be used: that arc would create a cycle or already exists.</li>
+        <li>Cancel with <kbd>Esc</kbd>, by clicking empty canvas, or by clicking the black connector again.</li>
+        <li>Click an arc to remove it (it turns red and dashed when you hover over it).</li>
+        <li>An arc already implied by a longer path (A → B → C makes A → C redundant) is kept but not drawn.</li>
+      </ul>
+
+      <h3>Date conflicts</h3>
+      <p>A task gets a <b class="red">red border</b> when its dates don’t work. Either a task it depends on ends after it starts (the arc turns red too; starting on the same day is fine), or its own end is before its start. Hover over the box to see why.</p>
+      <p>When a task has both a start and an end date, its duration is calculated from them, counting both days (the same start and end is 1 day). It is shown in days and weeks, e.g. <b>5d</b>, <b>3w</b> or <b>3w 1d</b>.</p>
+
+      <h3>Days or hours</h3>
+      <p>A graph is planned in whole days unless <b>Hours and minutes</b> is ticked in the ☰ menu; the choice is saved with the graph. In hours, start and end have a time of day and a task runs from its start up to its end: 09:00 – 11:00 is 2 hours, and a task may start at the very minute the one before it ends. Durations are written like <b>45m</b>, <b>2h 30m</b>, <b>1d 4h</b> or <b>1.5</b> (hours). When the graph covers more than one date, the boxes show the date under each time.</p>
+      <p>Switching from days to hours keeps everything: a task on Nov 14 becomes Nov 14 00:00 – Nov 15 00:00. Switching back rounds times to whole days, after asking.</p>
+
+      <h3>Moving around</h3>
+      <ul>
+        <li>Drag the background, or scroll, to pan. On a touch screen, drag with one finger and pinch with two to zoom.</li>
+        <li>A box with no arcs can be dragged anywhere that isn’t on top of another box. It stays where you put it until it gets an arc; then the automatic layout places it again.</li>
+        <li>A box with arcs can be dragged up or down its column (left or right along its row, when vertical). Drop it past a neighbour to change the order of that column; the layout keeps your order and works around it. <b>Reset box order</b> in the ☰ menu goes back to the automatic order.</li>
+        <li><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + scroll, or pinch, to zoom at the pointer. Or use <b>−</b> and <b>+</b>.</li>
+        <li><b>↔ Horizontal / ↕ Vertical</b> switches the layout between left-to-right and top-to-bottom. In the vertical layout the connectors are at the top (incoming) and bottom (outgoing) of each box. The choice is saved with the graph.</li>
+        <li><b>Fit</b> (between <b>−</b> and <b>+</b>) zooms in as far as possible while still showing the whole graph. A graph you open starts out that way too.</li>
+        <li><b>Show legend</b> (in the ☰ menu) shows the weeks or months each column (or row, when vertical) covers. It is off by default; the choice is remembered in this browser.</li>
+      </ul>
+
+      <h3>Saving</h3>
+      <ul>
+        <li>The graph is saved in this browser automatically after every change.</li>
+        <li>In the ☰ menu: <b>Save as…</b> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>S</kbd>) saves it as a file under a name you choose (in Chrome and Edge also in a folder you choose; other browsers put it in Downloads). The name is suggested again next time; <b>Open…</b> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>O</kbd>) loads one; <b>New</b> starts over.</li>
+        <li><b>Share link</b> copies a link that contains the whole graph. Whoever opens it sees a snapshot of the graph as it is now; later edits need a new link. The graph is in the part after <code>#</code>, which is never sent to the server.</li>
+      </ul>
+    </div>
+  </div>
+  <div id="status"></div>
+
+  <aside id="props" hidden aria-labelledby="props-title">
+    <header>
+      <h2 id="props-title">Task properties</h2>
+      <button id="props-close" type="button" aria-label="Close">×</button>
+    </header>
+
+    <label class="prop">Name
+      <input id="p-name" type="text" autocomplete="off">
+    </label>
+    <div class="prop-row">
+      <label class="prop"><span class="prop-head">Start <button type="button" class="clear" data-key="start" title="Clear the start" aria-label="Clear the start" hidden>×</button></span>
+        <input id="p-start" type="date">
+      </label>
+      <label class="prop"><span class="prop-head">End <button type="button" class="clear" data-key="end" title="Clear the end" aria-label="Clear the end" hidden>×</button></span>
+        <input id="p-end" type="date">
+      </label>
+    </div>
+    <label class="prop"><span class="prop-head"><span id="p-duration-label">Duration (days)</span> <button type="button" class="clear" data-key="duration" title="Clear the duration" aria-label="Clear the duration" hidden>×</button></span>
+      <input id="p-duration" type="number" min="1" step="1">
+    </label>
+    <p id="p-duration-hint" class="hint"></p>
+
+    <div id="p-suggest" class="suggest" hidden>
+      <p id="p-suggest-text"></p>
+      <button id="p-accept" type="button">Use suggested dates</button>
+    </div>
+
+    <label class="prop">Notes
+      <textarea id="p-notes" rows="4" placeholder="Details, links, reminders…"></textarea>
+    </label>
+
+    <div id="p-conflicts" class="conflicts" hidden></div>
+
+    <h3>Depends on</h3>
+    <ul id="p-before" class="deps"></ul>
+    <h3>Needed by</h3>
+    <ul id="p-after" class="deps"></ul>
+
+    <div class="prop-actions">
+      <button id="p-delete" type="button" class="danger">Delete task</button>
+      <button id="p-save" type="button" class="primary">Save task</button>
+    </div>
+  </aside>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@viz-js/viz@3.4.0/lib/viz-standalone.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

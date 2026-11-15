@@ -1,0 +1,37 @@
+{
+  "format": "task-dag",
+  "version": 1,
+  "layout": "horizontal",
+  "timeUnit": "hour",
+  "tasks": [
+    { "id": "t1",  "name": "Plan menu & shopping list", "start": "2026-11-21T09:00", "duration": "45m",  "end": "2026-11-21T09:45" },
+    { "id": "t2",  "name": "Go shopping",               "start": "2026-11-21T10:00", "duration": "90m",  "end": "2026-11-21T11:30" },
+    { "id": "t3",  "name": "Clean the house",           "start": "2026-11-21T10:00", "duration": "120m", "end": "2026-11-21T12:00" },
+    { "id": "t4",  "name": "Bake dessert",              "start": "2026-11-21T12:00", "duration": "90m",  "end": "2026-11-21T13:30" },
+    { "id": "t5",  "name": "Marinate the lamb",         "start": "2026-11-21T12:00", "duration": "20m",  "end": "2026-11-21T12:20" },
+    { "id": "t6",  "name": "Chill the wine",            "start": "2026-11-21T16:00", "duration": "120m", "end": "2026-11-21T18:00" },
+    { "id": "t7",  "name": "Set the table",             "start": null,               "duration": "30m",  "end": null,
+      "notes": "No times yet: open it to see the suggested start, from when the cleaning is done." },
+    { "id": "t8",  "name": "Prepare starter",           "start": "2026-11-21T17:00", "duration": "45m",  "end": "2026-11-21T17:45" },
+    { "id": "t9",  "name": "Roast the lamb",            "start": "2026-11-21T17:30", "duration": "90m",  "end": "2026-11-21T19:00" },
+    { "id": "t10", "name": "Guests arrive",             "start": "2026-11-21T18:30", "duration": "0m",   "end": "2026-11-21T18:30" },
+    { "id": "t11", "name": "Serve dinner",              "start": "2026-11-21T19:00", "duration": "120m", "end": "2026-11-21T21:00" },
+    { "id": "t12", "name": "Serve dessert & coffee",    "start": "2026-11-21T21:00", "duration": "45m",  "end": "2026-11-21T21:45" }
+  ],
+  "edges": [
+    { "from": "t1",  "to": "t2" },
+    { "from": "t2",  "to": "t4" },
+    { "from": "t2",  "to": "t5" },
+    { "from": "t2",  "to": "t6" },
+    { "from": "t2",  "to": "t8" },
+    { "from": "t5",  "to": "t9" },
+    { "from": "t3",  "to": "t7" },
+    { "from": "t7",  "to": "t10" },
+    { "from": "t6",  "to": "t11" },
+    { "from": "t8",  "to": "t11" },
+    { "from": "t9",  "to": "t11" },
+    { "from": "t10", "to": "t11" },
+    { "from": "t4",  "to": "t12" },
+    { "from": "t11", "to": "t12" }
+  ]
+}

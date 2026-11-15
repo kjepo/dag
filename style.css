@@ -1,0 +1,695 @@
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  font: 14px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #1f2328;
+  background: #f6f7f9;
+}
+
+/* ---------- Infinite canvas ---------- */
+#canvas {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  background-color: #f6f7f9;
+  background-image: radial-gradient(#d3d7de 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+#canvas.panning { cursor: grabbing; }
+
+#world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+#edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+#edges marker path { fill: #57606a; }
+
+.edge .line {
+  fill: none;
+  stroke: #57606a;
+  stroke-width: 2;
+}
+.edge .hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.edge:hover .line { stroke: #cf222e; stroke-dasharray: 6 4; }
+
+#empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: #8c959f;
+  font-size: 18px;
+  pointer-events: none;
+}
+#empty kbd {
+  font: inherit;
+  padding: 1px 6px;
+  border: 1px solid #c9ced6;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #fff;
+}
+
+/* ---------- Task boxes ---------- */
+.task {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 200px;
+  background: #fff;
+  border: 1px solid #c9ced6;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  cursor: default;
+  will-change: left, top;
+}
+.task .name {
+  padding: 8px 12px 6px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid #eaeef2;
+}
+.task .fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  margin: 0;
+  padding: 6px 12px 8px;
+  gap: 0 8px;
+}
+.task .field dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #8c959f;
+}
+.task .field dd {
+  margin: 0;
+  font-size: 12px;
+  color: #57606a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task .field dd.undef { color: #b6bcc4; }
+.task .field dd .sub { display: block; font-size: 11px; color: #8c959f; }
+
+/* ---------- Connectors ---------- */
+.conn {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 50%;
+  border: 2px solid #8c959f;
+  background: #fff;
+  transition: background-color .12s, border-color .12s, transform .12s;
+}
+.conn-in  { left: -7px; }
+.conn-out { right: -7px; }
+.conn { cursor: pointer; }
+.conn:hover { border-color: #1f2328; transform: scale(1.2); }
+
+.conn.active {
+  background: #000;
+  border-color: #000;
+}
+.conn.available {
+  background: #2da44e;
+  border-color: #1a7f37;
+  box-shadow: 0 0 0 4px rgba(45,164,78,.2);
+}
+.conn.available:hover { border-color: #1a7f37; transform: scale(1.3); }
+.conn.blocked { opacity: .35; cursor: not-allowed; }
+
+/* ---------- Toolbar ---------- */
+#toolbar {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(640px, calc(100% - 32px));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.08);
+}
+#task-input {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 15px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  outline: none;
+}
+#task-input:focus { border-color: #0969da; box-shadow: 0 0 0 3px rgba(9,105,218,.15); }
+#toolbar .sep { width: 1px; background: #d0d7de; margin: 4px 0; }
+#toolbar .group { display: flex; }
+#toolbar .group button { border-radius: 0; margin-left: -1px; }
+#toolbar .group button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+#toolbar .group button:last-child  { border-radius: 0 6px 6px 0; }
+#zoom-in, #zoom-out { font-size: 17px; line-height: 1; padding: 0 10px; }
+#zoom-fit { min-width: 44px; }
+#toolbar button {
+  padding: 0 12px;
+  white-space: nowrap;
+  font: inherit;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #f6f8fa;
+  cursor: pointer;
+}
+#toolbar button:hover { background: #eef1f4; }
+
+#status {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #1f2328;
+  color: #fff;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s;
+}
+#status.show { opacity: .92; }
+#status.error { background: #cf222e; }
+
+/* ---------- Help ---------- */
+#help {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: rgba(31,35,40,.35);
+  padding: 16px;
+  overflow-y: auto;
+}
+#help:not([hidden]) { display: flex; }
+.help-panel {
+  position: relative;
+  margin: auto;
+  width: min(560px, 100%);
+  padding: 20px 24px 16px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.2);
+  font-size: 14px;
+}
+.help-panel h2 { margin: 0 0 8px; font-size: 18px; }
+.help-panel h3 {
+  margin: 16px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #57606a;
+}
+.help-panel p, .help-panel ul { margin: 4px 0; }
+.help-panel ul { padding-left: 20px; }
+.help-panel li { margin: 3px 0; }
+.help-panel .green { color: #1a7f37; }
+.help-panel kbd {
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 1px 5px;
+  border: 1px solid #c9ced6;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #f6f8fa;
+}
+#help-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
+  font-size: 20px;
+  line-height: 1;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #57606a;
+  cursor: pointer;
+}
+#help-close:hover { background: #eef1f4; }
+
+/* ---------- Tasks with both dates set ---------- */
+.task.dated { border-width: 2px; border-color: #57606a; }
+/* Keep the connectors centred on the thicker border. */
+.task.dated .conn-in  { left: -8px; }
+.task.dated .conn-out { right: -8px; }
+#world.vertical .task.dated .conn-in  { left: 50%; top: -8px; }
+#world.vertical .task.dated .conn-out { left: 50%; right: auto; bottom: -8px; }
+
+/* ---------- Date conflicts ---------- */
+.task.conflict {
+  border-color: #cf222e;
+  box-shadow: 0 0 0 2px #cf222e, 0 2px 8px rgba(207,34,46,.2);   /* ring, so box size (and layout) is unchanged */
+}
+.edge.conflict .line { stroke: #cf222e; }
+#edges #arrow-conflict path { fill: #cf222e; }
+.help-panel .red { color: #cf222e; }
+
+/* ---------- Moving boxes (only those without arcs) ---------- */
+.task.movable { cursor: grab; }
+.task.dragging {
+  cursor: grabbing;
+  z-index: 5;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+}
+.task.drag-invalid {
+  opacity: .75;
+  border-color: #cf222e;
+  box-shadow: 0 0 0 2px #cf222e, 0 8px 24px rgba(207,34,46,.25);
+}
+
+/* ---------- Properties panel ---------- */
+.task { cursor: pointer; }
+.task.selected {
+  border-color: #0969da;
+  box-shadow: 0 0 0 2px #0969da, 0 4px 12px rgba(9,105,218,.15);
+}
+.task.selected.conflict { box-shadow: 0 0 0 2px #cf222e, 0 0 0 5px rgba(9,105,218,.5); }
+
+#props {
+  position: fixed;
+  top: 84px;
+  right: 16px;
+  z-index: 6;
+  width: min(320px, calc(100% - 32px));
+  max-height: calc(100% - 100px);
+  overflow-y: auto;
+  padding: 14px 16px 16px;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.12);
+}
+/* Hours: date + time fields need room; wider panel, and the fields stack when it can't be. */
+#props.hours { width: min(460px, calc(100% - 32px)); }
+#props.hours .prop-row { flex-wrap: wrap; }
+#props.hours .prop-row .prop { min-width: 200px; }
+#props header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+#props h2 { margin: 0; font-size: 15px; }
+#props h3 {
+  margin: 14px 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #57606a;
+}
+#props-close {
+  width: 28px; height: 28px;
+  font-size: 20px; line-height: 1;
+  border: none; border-radius: 6px;
+  background: transparent; color: #57606a; cursor: pointer;
+}
+#props-close:hover { background: #eef1f4; }
+
+.prop {
+  display: block;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #57606a;
+}
+.prop input {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 14px;
+  color: #1f2328;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  outline: none;
+}
+.prop input:focus { border-color: #0969da; box-shadow: 0 0 0 3px rgba(9,105,218,.15); }
+.prop-head { display: flex; align-items: center; justify-content: space-between; min-height: 20px; }
+.prop .clear {
+  width: 20px; height: 20px;
+  padding: 0;
+  font-size: 15px; line-height: 1;
+  color: #8c959f;
+  background: none;
+  border: none; border-radius: 4px;
+  cursor: pointer;
+}
+.prop .clear:hover { color: #cf222e; background: #ffebe9; }
+.prop .clear[hidden] { display: none; }
+.prop-row { display: flex; gap: 8px; }
+.prop-row .prop { flex: 1; min-width: 0; }
+.hint { margin: 4px 0 0; font-size: 12px; color: #8c959f; }
+
+.conflicts {
+  margin-top: 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #82071e;
+  background: #ffebe9;
+  border: 1px solid #ffcecb;
+  border-radius: 6px;
+}
+.conflicts ul { margin: 4px 0 0; padding-left: 18px; }
+
+.deps { list-style: none; margin: 0; padding: 0; }
+.deps li { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 13px; }
+.deps li.none { color: #8c959f; }
+.dep-name {
+  flex: 1; min-width: 0;
+  padding: 0; text-align: left;
+  font: inherit; color: #0969da;
+  background: none; border: none; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dep-name:hover { text-decoration: underline; }
+.dep-note { font-size: 11px; color: #8c959f; white-space: nowrap; }
+.dep-remove {
+  width: 22px; height: 22px;
+  font-size: 16px; line-height: 1;
+  color: #8c959f; background: none;
+  border: none; border-radius: 4px; cursor: pointer;
+}
+.dep-remove:hover { color: #cf222e; background: #ffebe9; }
+
+.prop-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+.prop-actions button { flex: 1; }
+.primary {
+  padding: 7px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: #0969da;
+  border: 1px solid #0969da;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.primary:hover { background: #0550ae; border-color: #0550ae; }
+.danger {
+  width: 100%;
+  padding: 7px;
+  font: inherit;
+  color: #cf222e;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.danger:hover { background: #cf222e; border-color: #cf222e; color: #fff; }
+
+/* ---------- Suggested dates ---------- */
+.prop input.suggested {
+  color: #8250df;
+  font-style: italic;
+  background: #fbf8ff;
+  border-style: dashed;
+  border-color: #c297ff;
+}
+.suggest {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #6639ba;
+  background: #fbf8ff;
+  border: 1px dashed #c297ff;
+  border-radius: 6px;
+}
+.suggest p { margin: 0 0 6px; }
+#p-accept {
+  padding: 4px 10px;
+  font: inherit;
+  color: #fff;
+  background: #8250df;
+  border: 1px solid #8250df;
+  border-radius: 6px;
+  cursor: pointer;
+}
+#p-accept:hover { background: #6639ba; }
+
+/* ---------- Notes ---------- */
+.prop textarea {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #1f2328;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  outline: none;
+  resize: vertical;
+}
+.prop textarea:focus { border-color: #0969da; box-shadow: 0 0 0 3px rgba(9,105,218,.15); }
+.task .note-icon {
+  display: inline-block;
+  margin-left: 6px;
+  color: #8c959f;
+  vertical-align: -1px;
+}
+
+/* ---------- Layout direction ---------- */
+/* Horizontal: connectors on the left/right edges, level with the divider under the name. */
+.conn { top: var(--divider, 50%); }
+/* Vertical: incoming on top, outgoing at the bottom, centred. */
+#world.vertical .conn { left: 50%; right: auto; margin: 0 0 0 -7px; }
+#world.vertical .conn-in  { top: -7px; }
+#world.vertical .conn-out { top: auto; bottom: -7px; }
+
+/* ---------- Time legend ---------- */
+#legend {
+  position: absolute;
+  z-index: 2;
+  background: rgba(255,255,255,.88);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+#legend:not([hidden]) { display: block; }
+/* Horizontal layout: a band along the bottom, one label under each column. */
+#legend:not(.vertical) {
+  left: 0; right: 0; bottom: 0;
+  height: 34px;
+  border-top: 1px solid #d0d7de;
+}
+/* Vertical layout: a band down the left, one label beside each row. */
+#legend.vertical {
+  top: 0; bottom: 0; left: 0;
+  width: 104px;
+  border-right: 1px solid #d0d7de;
+}
+.legend-label {
+  position: absolute;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #57606a;
+  background: #eef1f4;
+  border-radius: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: auto;
+  cursor: default;
+}
+#legend:not(.vertical) .legend-label { top: 50%; transform: translate(-50%, -50%); }
+#legend.vertical .legend-label {
+  left: 8px; right: 8px;
+  text-align: center;
+  white-space: normal;
+  transform: translateY(-50%);
+}
+body.legend-bottom #status { bottom: 50px; }
+
+/* ---------- Touch ---------- */
+/* The canvas handles its own panning and pinch-zooming; stop the browser from
+   scrolling or zooming the page instead. */
+#canvas { touch-action: none; -webkit-user-select: none; user-select: none; }
+
+/* ---------- Hamburger menu ---------- */
+.menu-wrap { position: relative; display: flex; }
+#menu-btn { display: flex; align-items: center; padding: 0 10px; color: #57606a; }
+#menu-btn.active { background: #eef1f4; color: #1f2328; }
+#menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -8px;
+  z-index: 20;
+  min-width: 230px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.14);
+}
+#menu:not([hidden]) { display: flex; flex-direction: column; }
+#toolbar #menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 14px;
+  text-align: left;
+  border: none;
+  border-radius: 6px;
+  background: none;
+}
+#toolbar #menu button:hover { background: #f3f5f7; }
+#menu kbd {
+  margin-left: auto;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #8c959f;
+}
+#menu hr { width: 100%; margin: 4px 0; border: none; border-top: 1px solid #eaeef2; }
+/* On/off items show a small switch on the right. */
+#menu .check {
+  order: 2;
+  position: relative;
+  flex: none;
+  width: 28px; height: 16px;
+  margin-left: auto;
+  font-size: 0;               /* hide the ✓ character */
+  border-radius: 8px;
+  background: #d0d7de;
+  transition: background .15s;
+}
+#menu .check::after {
+  content: '';
+  position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.2);
+  transition: transform .15s;
+}
+#menu [aria-checked="true"] .check { background: #0969da; }
+#menu [aria-checked="true"] .check::after { transform: translateX(12px); }
+#toolbar #menu button { padding-left: 14px; }
+
+#toolbar { z-index: 8; }   /* keep the menu above the properties panel */
+
+/* ---------- Layout-direction button ---------- */
+#direction { display: flex; align-items: center; gap: 6px; color: #1f2328; }
+#direction svg { color: #57606a; flex: none; }
+#toolbar #menu .narrow-only { display: none; }
+
+/* ---------- Phones and narrow windows ---------- */
+@media (max-width: 640px) {
+  /* A full-width bar at the top: just the task field and the menu. */
+  #toolbar {
+    top: calc(8px + env(safe-area-inset-top));
+    left: 8px;
+    right: 8px;
+    width: auto;
+    transform: none;
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 14px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.10);
+  }
+  /* 16px text stops iOS Safari from zooming the page when a field is tapped. */
+  #task-input, .prop input, .prop textarea { font-size: 16px; }
+  #task-input { flex: 1 1 auto; padding: 9px 12px; border-radius: 9px; }
+  #menu-btn { min-width: 44px; justify-content: center; border-radius: 9px; }
+  #direction { display: none; }
+  #toolbar #menu .narrow-only { display: flex; }
+  #toolbar #menu hr.narrow-only { display: block; }
+  #menu { right: -6px; min-width: 240px; }
+  #toolbar #menu button { padding-top: 11px; padding-bottom: 11px; font-size: 16px; }
+  #menu kbd { display: none; }   /* no keyboard shortcuts on a phone */
+
+  /* Zoom controls float in the bottom-right corner, like a map. */
+  #toolbar > .group {
+    position: fixed;
+    right: 12px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    flex-direction: column;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  }
+  #toolbar > .group button {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    margin: -1px 0 0 0;
+    border-radius: 0;
+    background: #fff;
+  }
+  #toolbar > .group button:first-child { margin-top: 0; border-radius: 12px 12px 0 0; }
+  #toolbar > .group button:last-child  { border-radius: 0 0 12px 12px; }
+  #zoom-fit { min-width: 0; font-size: 11px; }
+  body.legend-bottom #toolbar > .group { bottom: calc(50px + env(safe-area-inset-bottom)); }
+
+  /* Messages appear under the top bar, clear of the zoom controls. */
+  #status, body.legend-bottom #status {
+    top: calc(72px + env(safe-area-inset-top));
+    bottom: auto;
+    max-width: calc(100% - 24px);
+    text-align: center;
+  }
+
+  /* Task properties become a sheet along the bottom. */
+  #props {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    width: auto;
+    max-height: 60vh;
+    border-radius: 14px;
+    box-shadow: 0 -4px 28px rgba(0,0,0,.16);
+  }
+  #props.hours { width: auto; }
+}
+
+/* ---------- Never zoom or scroll the page itself ----------
+   The app does its own panning and zooming. If Safari zooms the page (pinch,
+   double-tap, or a focused field), the fixed bars end up partly off-screen
+   with no way back, so page-level gestures are switched off everywhere except
+   inside the panels that scroll. */
+html, body {
+  width: 100%;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+#props, #help { touch-action: pan-y; }   /* scroll containers: only vertical scrolling */
+@media (max-width: 640px) {
+  #toolbar { left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); }
+  #toolbar > .group { right: calc(12px + env(safe-area-inset-right)); }
+}
