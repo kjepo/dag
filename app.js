@@ -376,8 +376,32 @@ $(function () {
            `L${P(e.u, e.v)}`;
   }
 
+  // Graphviz's route for an arc (cubic bézier points, world coordinates), which
+  // goes around boxes. Valid only while the boxes are where graphviz put them;
+  // during animations and drags the simple curve above is used instead.
+  let splinesOn = false;
+  let freeMoving = null;   // id of a box being dragged or sliding back: its arcs use simple curves
+  function splinePath(pts) {
+    const n = pts.length - 1;
+    const d = vertical ? [0, 1] : [1, 0];
+    const along = p => p[0] * d[0] + p[1] * d[1];
+    const shift = (p, k) => [p[0] - d[0] * k, p[1] - d[1] * k];
+    const q = pts.map(p => [...p]);
+    // End with a short straight piece in the flow direction so the arrowhead lines up,
+    // and stop the tip just outside the connector.
+    const last = q[n];
+    const room = along(last) - along(q[Math.max(0, n - 3)]);
+    const back = room > ARROW_GAP + ARC_TAIL + 10 ? ARROW_GAP + ARC_TAIL : ARROW_GAP;
+    q[n] = shift(last, back);
+    q[n - 1] = shift(q[n - 1], back);
+    let path = `M${q[0]}`;
+    for (let i = 1; i + 2 <= n; i += 3) path += ` C${q[i]} ${q[i + 1]} ${q[i + 2]}`;
+    return path + ` L${shift(last, ARROW_GAP)}`;
+  }
+
   function drawEdge(e) {
-    const d = edgePath(tasks.get(e.from), tasks.get(e.to));
+    const useSpline = splinesOn && e.spline && freeMoving !== e.from && freeMoving !== e.to;
+    const d = useSpline ? splinePath(e.spline) : edgePath(tasks.get(e.from), tasks.get(e.to));
     for (const p of e.el.querySelectorAll('path')) p.setAttribute('d', d);
   }
   function drawEdges() { edges.forEach(e => { if (!e.hidden) drawEdge(e); }); }
@@ -526,7 +550,7 @@ $(function () {
       vertical ? '  rankdir=TB; nodesep=0.35; ranksep=0.85;'
                : '  rankdir=LR; nodesep=0.15; ranksep=0.9;',
       '  node [shape=box, fixedsize=true, label=""];',
-      vertical ? '  edge [tailport=s, headport=n];' : '  edge [tailport=e, headport=w];',
+      vertical ? '  edge [tailport=s, headport=n, arrowhead=none];' : '  edge [tailport=e, headport=w, arrowhead=none];',
     ];
     // Boxes without arcs all get the same size, so layout() can shuffle them
     // between their slots to put them in date order.
@@ -636,6 +660,15 @@ $(function () {
       rankOf.clear();
       ranksOf(g).forEach((k, id) => rankOf.set(id, k));
       const H = parseFloat(g.bb.split(',')[3]);
+      // Arc routes: "from>to" -> bézier points (y flipped like the boxes).
+      const routes = {};
+      const nameOf = new Map((g.objects || []).map(o => [o._gvid, o.name]));
+      (g.edges || []).forEach(ge => {
+        if (ge.style === 'invis' || !ge.pos) return;
+        const pts = ge.pos.split(/\s+/).filter(tok => !/^[se],/.test(tok))
+          .map(tok => tok.split(',').map(Number)).map(([x, y]) => [x, H - y]);
+        if (pts.length >= 4 && (pts.length - 1) % 3 === 0) routes[`${nameOf.get(ge.tail)}>${nameOf.get(ge.head)}`] = pts;
+      });
       const targets = {};
       const rankMap = new Map();   // graphviz rank coordinate -> task ids in that column/row
       const slots = [];            // centres graphviz gave the boxes without arcs
@@ -668,7 +701,7 @@ $(function () {
         targets[t.id] = t.pinned;
         placed.push(rectAt(t, t.pinned));
       });
-      animateTo(targets);
+      animateTo(targets, routes);
     }).catch(err => {
       console.error(err);
       showStatus('Layout failed: ' + err.message, { error: true });
@@ -713,8 +746,11 @@ $(function () {
     return boxes;
   }
 
-  function animateTo(targets) {
+  function animateTo(targets, routes = {}) {
     if (tween) tween.stop();
+    splinesOn = false;
+    freeMoving = null;
+    edges.forEach(e => { e.spline = routes[`${e.from}>${e.to}`] || null; });
 
     const from = {};
     tasks.forEach((t, id) => {
@@ -753,7 +789,7 @@ $(function () {
         drawEdges();
         positionLegend();
       },
-      complete() { tween = null; },
+      complete() { tween = null; splinesOn = true; drawEdges(); },
     });
   }
 
@@ -1404,6 +1440,7 @@ $(function () {
 
   function snapBoxBack(t, x0, y0) {
     const x1 = t.x, y1 = t.y;
+    freeMoving = t.id;
     $({ s: 0 }).animate({ s: 1 }, {
       duration: 250,
       step(s) {
@@ -1412,6 +1449,7 @@ $(function () {
         t.$el.css({ left: t.x, top: t.y });
         drawEdges();
       },
+      complete() { if (freeMoving === t.id) { freeMoving = null; drawEdges(); } },   // back where graphviz put it
     });
   }
 
@@ -1473,6 +1511,7 @@ $(function () {
       const t = boxDrag.t;
       boxDrag.moved = true;
       if (boxDrag.rank) {
+        freeMoving = t.id;
         if (vertical) t.x = boxDrag.x0 + dx; else t.y = boxDrag.y0 + dy;
         t.$el.css({ left: t.x, top: t.y }).addClass('dragging');
         drawEdges();
