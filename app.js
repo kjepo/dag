@@ -56,6 +56,19 @@ $(function () {
     });
     return r.isConfirmed;
   }
+  // Ask for a date (days) or a date and time (hours); resolves to the value, or null.
+  async function askDate({ title, text = '', value = '', confirm = 'OK' }) {
+    if (!hasSwal) {
+      const a = window.prompt(`${title}\n${text}\n(${hourMode ? 'YYYY-MM-DD HH:MM' : 'YYYY-MM-DD'})`, value.replace('T', ' '));
+      return a == null ? null : a.trim();
+    }
+    const r = await dialog.fire({
+      titleText: title, text, input: hourMode ? 'datetime-local' : 'date', inputValue: value,
+      showCancelButton: true, confirmButtonText: confirm,
+      inputValidator: v => parseTime(v) != null ? null : (hourMode ? 'Please pick a date and time' : 'Please pick a date'),
+    });
+    return r.isConfirmed ? r.value : null;
+  }
   // Show a link to copy by hand (when the clipboard isn't available).
   async function showLink(url) {
     if (!hasSwal) { window.prompt('Copy this link:', url); return; }
@@ -230,12 +243,17 @@ $(function () {
 
   // ---------------------------------------------------------------- status
   let statusTimer = null;
+  // opts.action: {label, run} adds a button; the message then stays up longer.
   function showStatus(msg, opts = {}) {
     clearTimeout(statusTimer);
-    $status.text(msg).toggleClass('error', !!opts.error).addClass('show');
-    if (!opts.sticky) statusTimer = setTimeout(() => $status.removeClass('show'), 2500);
+    $status.text(msg).toggleClass('error', !!opts.error).toggleClass('has-action', !!opts.action).addClass('show');
+    if (opts.action) {
+      $('<button type="button">').text(opts.action.label)
+        .on('click', () => { hideStatus(); opts.action.run(); }).appendTo($status);
+    }
+    if (!opts.sticky) statusTimer = setTimeout(hideStatus, opts.action ? 10000 : 2500);
   }
-  function hideStatus() { clearTimeout(statusTimer); $status.removeClass('show'); }
+  function hideStatus() { clearTimeout(statusTimer); $status.removeClass('show has-action'); }
 
   // ---------------------------------------------------------------- tasks
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -313,6 +331,10 @@ $(function () {
     '<path d="M3 1.5h7l3 3v10H3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>' +
     '<path d="M5.5 7.5h5M5.5 10h5M5.5 12.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 
+  const LOCK_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">' +
+    '<rect x="3" y="7" width="10" height="7.5" rx="1.5" fill="currentColor"/>' +
+    '<path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+
   // (Re)draw a box's contents and re-measure it (the name may wrap differently).
   // A task whose start and end are both set.
   function isDated(t) { return !!(t.start && t.end); }
@@ -320,6 +342,7 @@ $(function () {
   function renderTask(t) {
     const hasNotes = !!(t.notes && t.notes.trim());
     t.$el.find('.name').text(t.name)
+      .append(t.locked ? $('<span class="lock-icon" aria-label="Locked" title="Locked: never moved automatically">').html(LOCK_ICON) : null)
       .append(hasNotes ? $('<span class="note-icon" aria-label="Has notes">').html(NOTE_ICON) : null)
       .attr('title', hasNotes ? t.notes : null);
     t.$el.toggleClass('dated', isDated(t));   // thicker border; changes the size, so before measuring
@@ -339,9 +362,9 @@ $(function () {
     t.cy = border + dividerY;                              // same point, from the box's outer top
   }
 
-  function createTask({ id, name, start = null, duration = null, end = null, notes = '' }) {
+  function createTask({ id, name, start = null, duration = null, end = null, notes = '', locked = false }) {
     duration = derivedDuration(start, end) ?? duration;
-    const t = { id, name, start, duration, end, notes: typeof notes === 'string' ? notes : '', x: 0, y: 0, o: 0 };
+    const t = { id, name, start, duration, end, notes: typeof notes === 'string' ? notes : '', locked: locked === true, x: 0, y: 0, o: 0 };
     t.$el = $('<div class="task">').attr('data-id', id).append(
       $('<div class="conn conn-in" title="Click, then pick a green connector to connect">'),
       $('<div class="name">'),
@@ -494,10 +517,13 @@ $(function () {
   function durationValue(n) { return hourMode ? `${n}m` : `${n}d`; }
   // Days count both the first and the last day; times run from start up to end.
   function INCL() { return hourMode ? 0 : 1; }
+  // How soon a task may start after one it depends on ends: the next day (days),
+  // the same minute (hours).
+  function NEXT() { return hourMode ? 0 : 1; }
 
   // A task is in conflict when its own dates disagree, or when it is connected
   // to a task whose dates violate the dependency (the later task starts before
-  // the earlier one ends; starting on the same day is fine).
+  // the earlier one ends; in days, it must start the day after).
   function updateConflicts() {
     const problems = new Map();
     tasks.forEach((t, id) => problems.set(id, []));
@@ -511,12 +537,15 @@ $(function () {
       const a = tasks.get(edge.from), b = tasks.get(edge.to);
       const aEnd = parseTime(a.end) ?? parseTime(a.start);
       const bStart = parseTime(b.start) ?? parseTime(b.end);
-      edge.conflict = aEnd != null && bStart != null && bStart < aEnd;
+      edge.conflict = aEnd != null && bStart != null && bStart < aEnd + NEXT();
       edge.el.classList.toggle('conflict', edge.conflict);
       edge.el.querySelector('.line').setAttribute('marker-end', edge.conflict ? 'url(#arrow-conflict)' : 'url(#arrow)');
       if (edge.conflict) {
-        problems.get(b.id).push(`Starts before “${a.name}” ends (${displayValue(a.end || a.start)})`);
-        problems.get(a.id).push(`Ends after “${b.name}” starts (${displayValue(b.start || b.end)})`);
+        const ends = displayValue(a.end || a.start), starts = displayValue(b.start || b.end);
+        problems.get(b.id).push(hourMode || bStart < aEnd ? `Starts before “${a.name}” ends (${ends})`
+                                                          : `Starts the same day “${a.name}” ends (${ends})`);
+        problems.get(a.id).push(hourMode || bStart < aEnd ? `Ends after “${b.name}” starts (${starts})`
+                                                          : `Ends the same day “${b.name}” starts (${starts})`);
       }
     });
 
@@ -565,7 +594,7 @@ $(function () {
       let s = parseTime(t.start), e = parseTime(t.end);
       if (s == null && e == null) {
         const ends = preds(id).map(p => times.get(p)).filter(Boolean).map(r => r.e);
-        if (ends.length) s = Math.max(...ends);
+        if (ends.length) s = Math.max(...ends) + NEXT();
       }
       if (e == null && s != null) e = d != null ? s + d - INCL() : s;
       if (s == null && e != null) s = d != null ? e - d + INCL() : e;
@@ -575,14 +604,14 @@ $(function () {
     const finish = Math.max(...[...times.values()].map(r => r.e));
     [...order].reverse().forEach(id => {
       const r = times.get(id);
-      const after = succs(id).map(s => latestStart.get(s)).filter(v => v != null);
+      const after = succs(id).map(s => latestStart.get(s)).filter(v => v != null).map(v => v - NEXT());
       const lf = after.length ? Math.min(...after) : r ? finish : null;
       if (r) {
         r.latestEnd = lf;
         r.slack = lf - r.e;
         latestStart.set(id, lf - (r.e - r.s));
       } else if (lf != null) {
-        latestStart.set(id, lf);   // times unknown: pass the constraint on to the tasks before it
+        latestStart.set(id, lf + NEXT());   // times unknown: pass the constraint on to the tasks before it
       }
     });
     return { times, latestStart };
@@ -612,7 +641,7 @@ $(function () {
     edges.forEach(e => {
       const a = times.get(e.from), b = times.get(e.to);
       // The arc that sets the latest end of a critical task.
-      e.critical = !!(a && b && a.slack <= 0 && b.slack <= 0 && latestStart.get(e.to) === a.latestEnd);
+      e.critical = !!(a && b && a.slack <= 0 && b.slack <= 0 && latestStart.get(e.to) - NEXT() === a.latestEnd);
       e.el.classList.toggle('critical', e.critical);
       e.el.querySelector('.line').setAttribute('marker-end',
         e.conflict ? 'url(#arrow-conflict)' : e.critical ? 'url(#arrow-critical)' : 'url(#arrow)');
@@ -1013,6 +1042,7 @@ $(function () {
       tasks: [...tasks.values()].map(t => ({
         id: t.id, name: t.name, start: t.start, duration: t.duration, end: t.end,
         ...(t.notes ? { notes: t.notes } : {}),
+        ...(t.locked ? { locked: true } : {}),
         ...(t.pinned ? { pos: { x: Math.round(t.pinned.x), y: Math.round(t.pinned.y) } } : {}),
       })),
       edges: edges.map(e => ({ from: e.from, to: e.to })),
@@ -1031,6 +1061,7 @@ $(function () {
     updateMovable();
     layout();
     if (selectedId) fillProps();
+    checkNewConflicts(!opts.quiet);
     const json = saveLocal();
     recordHistory(json, opts.coalesce);
   }
@@ -1120,7 +1151,7 @@ $(function () {
       if (!t || typeof t.name !== 'string') { skipped++; return; }
       const id = typeof t.id === 'string' && /^t\d+$/.test(t.id) && !tasks.has(t.id) ? t.id : null;
       if (!id) { skipped++; return; }
-      const task = createTask({ id, name: t.name, start: t.start, duration: t.duration, end: t.end, notes: t.notes });
+      const task = createTask({ id, name: t.name, start: t.start, duration: t.duration, end: t.end, notes: t.notes, locked: t.locked });
       const was = opts.prev && opts.prev.get(id);
       if (was) {   // the same box as before: move it from where it was instead of fading in
         Object.assign(task, { x: was.x, y: was.y, o: 1, fresh: false });
@@ -1141,7 +1172,7 @@ $(function () {
       userMoved = false;
       initialView = true;   // show the loaded graph as large as fits, like the Fit button
     }
-    changed();
+    changed({ quiet: true });
     return skipped;
   }
 
@@ -1586,6 +1617,7 @@ $(function () {
       (d != null ? formatDuration(durationValue(d)).long + '. ' : '') +
       (both ? `Calculated from the ${hourMode ? 'times' : 'dates'}; changing it moves the end.`
             : 'Set two of start, end and duration and the third is filled in.'));
+    $('#p-locked').prop('checked', !!t.locked);
     $('#p-slack').prop('hidden', !t.slack).text(t.slack ? slackText(t.slack) : '')
       .toggleClass('critical', !!t.slack && t.slack.slack <= 0);
 
@@ -1609,7 +1641,7 @@ $(function () {
   }
 
   // Suggested dates for a task that lacks a start and/or end:
-  //  - start: the latest end among the tasks it depends on (same day is fine);
+  //  - start: after the latest end among the tasks it depends on (the next day, in days);
   //  - end:   start + duration, or else the earliest start
   //           among the tasks that depend on it;
   //  - start from end - duration when nothing comes before it.
@@ -1625,13 +1657,13 @@ $(function () {
     const why = [];
 
     if (s == null && predEnds.length) {
-      sugS = Math.max(...predEnds);
-      why.push(`start: ${when} the tasks it depends on end`);
+      sugS = Math.max(...predEnds) + NEXT();
+      why.push(hourMode ? 'start: when the tasks it depends on end' : 'start: the day after the tasks it depends on end');
     }
     if (e == null) {
       const S = s ?? sugS;
       if (S != null && d != null) { sugE = S + d - INCL(); why.push('end: start + duration'); }
-      else if (succStarts.length) { sugE = Math.min(...succStarts); why.push(`end: ${when} the tasks that need it start`); }
+      else if (succStarts.length) { sugE = Math.min(...succStarts) - NEXT(); why.push(hourMode ? 'end: when the tasks that need it start' : 'end: the day before the tasks that need it start'); }
     }
     if (s == null && sugS == null && d != null) {
       const E = e ?? sugE;
@@ -1655,6 +1687,148 @@ $(function () {
     renderTask(t);
     changed();
   }
+
+  // ---------------------------------------------------------------- resolve conflicts
+  // Move tasks that start too early (before a task they depend on ends, or in
+  // days on that same day) later by just enough, keeping their duration; the
+  // move carries on to the tasks after them. Locked tasks never move: they stay
+  // in conflict and are reported. Own-date problems (end before start) are left.
+  // Returns { moves: id -> {start, end}, shift: id -> amount, blocked: [ids] }.
+  function planPush() {
+    const cur = new Map([...tasks].map(([id, t]) => [id, { s: parseTime(t.start), e: parseTime(t.end) }]));
+    const moves = new Map(), shift = new Map(), blocked = [];
+    topoOrder().forEach(id => {
+      const t = tasks.get(id), c = cur.get(id);
+      const at = c.s ?? c.e;                           // where it starts, as conflicts see it
+      if (at == null) return;
+      const ends = edges.filter(x => x.to === id).map(x => { const p = cur.get(x.from); return p.e ?? p.s; })
+        .filter(v => v != null);
+      if (!ends.length) return;
+      const need = Math.max(...ends) + NEXT() - at;
+      if (need <= 0) return;
+      if (t.locked) { blocked.push(id); return; }
+      if (c.s != null) c.s += need;
+      if (c.e != null) c.e += need;
+      shift.set(id, need);
+      moves.set(id, { start: c.s != null ? formatTime(c.s) : t.start, end: c.e != null ? formatTime(c.e) : t.end });
+    });
+    return { moves, shift, blocked };
+  }
+
+  function planEnd() {
+    const ends = [...tasks.values()].map(t => parseTime(t.end) ?? parseTime(t.start)).filter(v => v != null);
+    return ends.length ? Math.max(...ends) : null;
+  }
+
+  function pushLater() {
+    const plan = planPush();
+    const names = ids => ids.map(id => `“${tasks.get(id).name}”`).join(', ');
+    if (!plan.moves.size) {
+      showStatus(plan.blocked.length
+        ? `Nothing can move: ${names(plan.blocked)} ${plan.blocked.length === 1 ? 'is' : 'are'} locked`
+        : 'No conflicts that moving tasks later would fix');
+      return;
+    }
+    const before = planEnd();
+    plan.moves.forEach((m, id) => {
+      const t = tasks.get(id);
+      t.start = m.start; t.end = m.end;
+      t.duration = derivedDuration(t.start, t.end) ?? t.duration;
+      renderTask(t);
+    });
+    changed();
+    const after = planEnd(), n = plan.moves.size;
+    let msg = `Moved ${n} task${n === 1 ? '' : 's'} later`;
+    if (after != null && before != null && after > before) {
+      msg += `; the plan now ends ${displayValue(formatTime(after))}, ${formatDuration(durationValue(after - before)).long} later`;
+    }
+    if (plan.blocked.length) msg += `. Still in conflict (locked): ${names(plan.blocked)}`;
+    showStatus(msg, { action: { label: 'Undo', run: undo } });
+  }
+  $('#resolve').on('click', pushLater);
+
+  // After an edit that creates new conflicts, offer to push the later tasks.
+  let conflictKeys = new Set();
+  function checkNewConflicts(offer) {
+    const now = new Set(edges.filter(e => e.conflict).map(e => e.from + '>' + e.to));
+    const fresh = [...now].some(k => !conflictKeys.has(k));
+    conflictKeys = now;
+    if (!offer || !fresh) return;
+    const plan = planPush();
+    if (!plan.moves.size) return;
+    const n = plan.moves.size;
+    showStatus(`${n} later task${n === 1 ? '' : 's'} now start${n === 1 ? 's' : ''} too early.`,
+      { action: { label: 'Push later', run: pushLater } });
+  }
+
+  // ---------------------------------------------------------------- auto-schedule
+  // Fill in every missing start and end, as early as the dependencies allow: a
+  // task starts when the last task it depends on ends (or at `from` when it
+  // depends on nothing), and ends after its duration. Times already set are kept,
+  // even when they conflict. Returns the changes (id -> {start?, end?}) and how
+  // many tasks couldn't be placed (they need `from`).
+  function planSchedule(from) {
+    const changes = new Map(), endOf = new Map();
+    let unplaced = 0, noDuration = 0;
+    topoOrder().forEach(id => {
+      const t = tasks.get(id), d = parseDuration(t.duration);
+      let s = parseTime(t.start), e = parseTime(t.end);
+      if (s == null && e != null && d != null) s = e - d + INCL();
+      if (t.locked) { if (s != null || e != null) endOf.set(id, e ?? s); else unplaced++; return; }   // never changed
+      if (s == null && e == null) {
+        const ends = edges.filter(x => x.to === id).map(x => endOf.get(x.from));
+        if (ends.some(v => v == null)) s = null;           // something before it couldn't be placed
+        else if (ends.length) s = Math.max(...ends) + NEXT();
+        else s = from;
+      }
+      if (s != null && e == null && d != null) e = s + d - INCL();
+      const c = {};
+      if (s != null && !t.start) c.start = formatTime(s);
+      if (e != null && !t.end) c.end = formatTime(e);
+      if (c.start || c.end) {
+        changes.set(id, c);
+        if (e == null) noDuration++;                        // only a start: no duration to end it
+      }
+      if (s == null && e == null) unplaced++;
+      else endOf.set(id, e ?? s);
+    });
+    return { changes, unplaced, noDuration };
+  }
+
+  function today() {
+    const d = new Date();
+    const day = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / DAY_MS;
+    return hourMode ? day * MIN_PER_DAY + 9 * 60 : day;     // 09:00 in hours
+  }
+
+  async function autoSchedule() {
+    if (!tasks.size) { showStatus('Add some tasks first'); return; }
+    let plan = planSchedule(null);
+    if (plan.unplaced) {
+      // Some tasks depend on nothing dated: ask where the plan starts.
+      const known = [...tasks.values()].map(t => parseTime(t.start)).filter(v => v != null);
+      const answer = await askDate({
+        title: 'Auto-schedule', confirm: 'Schedule',
+        value: formatTime(known.length ? Math.min(...known) : today()),
+        text: 'Tasks without times are placed as early as their dependencies allow, starting from this ' +
+              (hourMode ? 'time' : 'date') + '. Times you have set are kept.',
+      });
+      if (answer == null) return;
+      plan = planSchedule(parseTime(answer));
+    }
+    if (!plan.changes.size) { showStatus('Nothing to schedule: every task already has its times'); return; }
+    plan.changes.forEach((c, id) => {
+      const t = tasks.get(id);
+      Object.assign(t, c);
+      t.duration = derivedDuration(t.start, t.end) ?? t.duration;
+      renderTask(t);
+    });
+    changed();
+    const n = plan.changes.size;
+    showStatus(`Scheduled ${n} task${n === 1 ? '' : 's'}` +
+      (plan.noDuration ? ` (${plan.noDuration} without a duration got only a start)` : '') + '. Undo takes it back.');
+  }
+  $('#auto-schedule').on('click', autoSchedule);
 
   // Apply an edit to start / end / duration, filling in the third value when possible.
   function setTiming(t, key, value) {
@@ -1716,6 +1890,13 @@ $(function () {
     renderTask(t);
     changed({ coalesce: 'name:' + t.id });
   }).on('blur', fillProps);   // restores the name if the field was left empty
+  $('#p-locked').on('change', function () {
+    const t = tasks.get(selectedId);
+    if (!t) return;
+    t.locked = this.checked;
+    renderTask(t);   // the box shows a lock icon
+    changed();
+  });
   $('#p-notes').on('input', function () {
     const t = tasks.get(selectedId);
     if (!t) return;

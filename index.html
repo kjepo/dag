@@ -50,6 +50,8 @@
         <hr>
         <button id="direction-menu" type="button" role="menuitem" class="narrow-only">Switch to vertical layout</button>
         <button id="reset-order" type="button" role="menuitem">Reset box order</button>
+        <button id="auto-schedule" type="button" role="menuitem">Auto-schedule…</button>
+        <button id="resolve" type="button" role="menuitem">Resolve conflicts</button>
         <hr>
         <button id="new" type="button" role="menuitem">New</button>
         <button id="open" type="button" role="menuitem">Open… <kbd>⌘/Ctrl O</kbd></button>
@@ -75,7 +77,7 @@
       <p>Type a task name in the text field and press <kbd>Enter</kbd>. Keep typing to add the next one. The field always keeps focus. A task with both a start and an end date gets a <b>thicker border</b> and is placed after the undated tasks in its column, sorted by date.</p>
 
       <h3>Task properties</h3>
-      <p>Click a box to edit its name, dates and notes (a box with notes shows a small note icon; hover over the name to read them), see and remove its dependencies (including ones that aren’t drawn), or delete it. Set two of start, end and duration and the third is filled in; the <b>×</b> next to one clears it. A missing start or end is suggested (in <i>purple italics</i>) from the connected tasks: the day the tasks it depends on end, and the day the tasks that need it start. Click <b>Use suggested dates</b> to keep them. Changes are applied as you make them; <b>Save task</b> (or <kbd>Enter</kbd>) confirms and closes the panel. Close with <kbd>Esc</kbd> or by clicking the background.</p>
+      <p>Click a box to edit its name, dates and notes (a box with notes shows a small note icon; hover over the name to read them), see and remove its dependencies (including ones that aren’t drawn), or delete it. Set two of start, end and duration and the third is filled in; the <b>×</b> next to one clears it. A missing start or end is suggested (in <i>purple italics</i>) from the connected tasks: the day the tasks it depends on end, and the day the tasks that need it start. Click <b>Use suggested dates</b> to keep them. <b>Auto-schedule…</b> in the ☰ menu does that for every task at once: each task without times starts as soon as the tasks it depends on end (tasks that depend on nothing start on a date you pick) and ends after its duration. Times you have set are never moved, and locked tasks are left alone. Changes are applied as you make them; <b>Save task</b> (or <kbd>Enter</kbd>) confirms and closes the panel. Close with <kbd>Esc</kbd> or by clicking the background.</p>
 
       <h3>Dependencies</h3>
       <p>Every box has a connector on each side. Click one: it turns <b>black</b>, and the connectors on the opposite side of the other boxes turn <b class="green">green</b>. Click a green one to draw the arc.</p>
@@ -88,7 +90,8 @@
       </ul>
 
       <h3>Date conflicts</h3>
-      <p>A task gets a <b class="red">red border</b> when its dates don’t work. Either a task it depends on ends after it starts (the arc turns red too; starting on the same day is fine), or its own end is before its start. Hover over the box to see why.</p>
+      <p>A task gets a <b class="red">red border</b> when its dates don’t work. Either it starts before a task it depends on has ended (the arc turns red too), or its own end is before its start. Hover over the box to see why. In days, a task may start the day after the tasks it depends on end, not the same day; in hours, at the very minute they end.</p>
+      <p>When an edit makes later tasks start too early (say a task grows from 1 to 3 days), a message offers <b>Push later</b>: each of those tasks moves later by just enough, keeping its duration, and so do the tasks after it. A task with slack absorbs the delay, so the move stops there. <b>Resolve conflicts</b> in the ☰ menu does the same at any time. A <b>locked</b> task (tick <b>Locked</b> in its properties; the box shows a 🔒) is never moved: if the push reaches it, it stays red, as a sign that something before it has to get shorter. Undo takes a push back.</p>
       <p>When a task has both a start and an end date, its duration is calculated from them, counting both days (the same start and end is 1 day). It is shown in days and weeks, e.g. <b>5d</b>, <b>3w</b> or <b>3w 1d</b>.</p>
 
       <h3>Critical path</h3>
@@ -143,6 +146,7 @@
     </label>
     <p id="p-duration-hint" class="hint"></p>
     <p id="p-slack" class="hint slack-line" hidden></p>
+    <label class="prop-check"><input id="p-locked" type="checkbox"> Locked: never moved by Auto-schedule or Resolve conflicts</label>
 
     <div id="p-suggest" class="suggest" hidden>
       <p id="p-suggest-text"></p>

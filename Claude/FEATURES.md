@@ -1,14 +1,13 @@
 # Feature ideas
 
-Candidates for the task DAG editor, roughly in order of value. Done: undo/redo, and the
-critical path with slack (toggle with "!").
+Candidates for the task DAG editor, roughly in order of value. Done: undo/redo, the
+critical path with slack (toggle with "!"), and auto-schedule.
 
 ## Scheduling
 
-### Auto-schedule
-One menu item that fills in every missing start and end from durations and
-dependencies, from a chosen start date (today the suggestions are accepted one
-task at a time). Follow-up: "shift everything after this task by N days/hours".
+### Shift later tasks
+Auto-schedule (done) fills in missing times. Still to do: "shift everything
+after this task by N days/hours", for when a task runs late.
 
 ### Gantt view
 The same graph as a timeline: bars on a date axis, arcs between them. Switch

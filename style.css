@@ -730,3 +730,14 @@ html, body {
 .swal2-popup .swal2-styled { padding: 7px 16px; font-size: 14px; border-radius: 6px; }
 .swal2-popup .swal2-icon { margin: 8px auto 4px; font-size: 11px; }   /* its size is in em */
 .swal2-popup .swal2-validation-message { font-size: 13px; }
+
+/* ---------- Locked tasks, Push later ---------- */
+.task .lock-icon { display: inline-block; margin-left: 6px; color: #57606a; vertical-align: -1px; }
+.prop-check { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; color: #57606a; cursor: pointer; }
+.prop-check input { margin: 0; }
+#status.has-action { pointer-events: auto; display: flex; align-items: center; gap: 12px; }
+#status button {
+  padding: 3px 10px; font: inherit; font-weight: 600; color: #fff;
+  background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.35); border-radius: 6px; cursor: pointer;
+}
+#status button:hover { background: rgba(255,255,255,.28); }
