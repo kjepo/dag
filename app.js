@@ -381,22 +381,15 @@ $(function () {
   // during animations and drags the simple curve above is used instead.
   let splinesOn = false;
   let freeMoving = null;   // id of a box being dragged or sliding back: its arcs use simple curves
-  function splinePath(pts) {
-    const n = pts.length - 1;
-    const d = vertical ? [0, 1] : [1, 0];
-    const along = p => p[0] * d[0] + p[1] * d[1];
-    const shift = (p, k) => [p[0] - d[0] * k, p[1] - d[1] * k];
-    const q = pts.map(p => [...p]);
-    // End with a short straight piece in the flow direction so the arrowhead lines up,
-    // and stop the tip just outside the connector.
-    const last = q[n];
-    const room = along(last) - along(q[Math.max(0, n - 3)]);
-    const back = room > ARROW_GAP + ARC_TAIL + 10 ? ARROW_GAP + ARC_TAIL : ARROW_GAP;
-    q[n] = shift(last, back);
-    q[n - 1] = shift(q[n - 1], back);
-    let path = `M${q[0]}`;
-    for (let i = 1; i + 2 <= n; i += 3) path += ` C${q[i]} ${q[i + 1]} ${q[i + 2]}`;
-    return path + ` L${shift(last, ARROW_GAP)}`;
+  function splinePath({ pts, tip }) {
+    let path = `M${pts[0]}`;
+    for (let i = 1; i + 2 < pts.length; i += 3) path += ` C${pts[i]} ${pts[i + 1]} ${pts[i + 2]}`;
+    const last = pts[pts.length - 1];
+    if (!tip) return path;
+    // Straight on from where graphviz's route stops (the base of its arrowhead)
+    // towards the head connector, ending the gap short of it.
+    const dx = tip[0] - last[0], dy = tip[1] - last[1], len = Math.hypot(dx, dy) || 1;
+    return path + ` L${[tip[0] - dx / len * ARROW_GAP, tip[1] - dy / len * ARROW_GAP]}`;
   }
 
   function drawEdge(e) {
@@ -543,6 +536,22 @@ $(function () {
     return [...undated, ...dated];
   }
 
+  // Depth of every connected task: 0 without predecessors, else 1 + the deepest predecessor.
+  function earliestLevels() {
+    const level = new Map();
+    const preds = new Map();
+    edges.forEach(e => { if (!preds.has(e.to)) preds.set(e.to, []); preds.get(e.to).push(e.from); });
+    const depth = id => {
+      if (level.has(id)) return level.get(id);
+      level.set(id, 0);   // (the graph is acyclic; this only guards against surprises)
+      const d = Math.max(-1, ...(preds.get(id) || []).map(depth)) + 1;
+      level.set(id, d);
+      return d;
+    };
+    tasks.forEach((t, id) => { if (hasEdges(id) && !t.pinned) depth(id); });
+    return level;
+  }
+
   function dotSource(hints = []) {
     const q = s => '"' + s + '"';
     const lines = [
@@ -550,7 +559,9 @@ $(function () {
       vertical ? '  rankdir=TB; nodesep=0.35; ranksep=0.85;'
                : '  rankdir=LR; nodesep=0.15; ranksep=0.9;',
       '  node [shape=box, fixedsize=true, label=""];',
-      vertical ? '  edge [tailport=s, headport=n, arrowhead=none];' : '  edge [tailport=e, headport=w, arrowhead=none];',
+      // The arrowhead graphviz reserves is as long as our straight end piece plus the gap
+      // before the connector, so its route ends where that piece starts, already aimed right.
+      `  edge [${vertical ? 'tailport=s, headport=n' : 'tailport=e, headport=w'}, arrowsize=${(ARC_TAIL + ARROW_GAP) / 10}];`,
     ];
     // Boxes without arcs all get the same size, so layout() can shuffle them
     // between their slots to put them in date order.
@@ -567,6 +578,14 @@ $(function () {
       lines.push(`  ${q(t.id)} [width=${(w / 72).toFixed(3)}, height=${(h / 72).toFixed(3)}];`);
     });
     edges.forEach(e => { if (!e.hidden) lines.push(`  ${q(e.from)} -> ${q(e.to)};`); });
+    // Each task as early as its predecessors allow: same rank for all tasks at the
+    // same depth (longest path from a task with no predecessors).
+    const levels = new Map();
+    earliestLevels().forEach((lvl, id) => {
+      if (!levels.has(lvl)) levels.set(lvl, []);
+      levels.get(lvl).push(q(id));
+    });
+    levels.forEach(ids => { if (ids.length > 1) lines.push(`  { rank=same; ${ids.join('; ')}; }`); });
     // The user's order within a rank: invisible arcs between boxes kept in the same rank.
     hints.forEach(([a, b]) => {
       const [x, y] = flatReversed[vertical ? 'v' : 'h'] ? [b, a] : [a, b];
@@ -665,9 +684,13 @@ $(function () {
       const nameOf = new Map((g.objects || []).map(o => [o._gvid, o.name]));
       (g.edges || []).forEach(ge => {
         if (ge.style === 'invis' || !ge.pos) return;
-        const pts = ge.pos.split(/\s+/).filter(tok => !/^[se],/.test(tok))
-          .map(tok => tok.split(',').map(Number)).map(([x, y]) => [x, H - y]);
-        if (pts.length >= 4 && (pts.length - 1) % 3 === 0) routes[`${nameOf.get(ge.tail)}>${nameOf.get(ge.head)}`] = pts;
+        const toks = ge.pos.split(/\s+/);
+        const flip = tok => { const [x, y] = tok.split(',').map(Number); return [x, H - y]; };
+        const tipTok = toks.find(tok => tok.startsWith('e,'));
+        const pts = toks.filter(tok => !/^[se],/.test(tok)).map(flip);
+        if (pts.length >= 4 && (pts.length - 1) % 3 === 0) {
+          routes[`${nameOf.get(ge.tail)}>${nameOf.get(ge.head)}`] = { pts, tip: tipTok ? flip(tipTok.slice(2)) : null };
+        }
       });
       const targets = {};
       const rankMap = new Map();   // graphviz rank coordinate -> task ids in that column/row
