@@ -2095,7 +2095,6 @@ $(function () {
     const $task = $(e.target).closest('.task');
     if ($task.length) {
       const t = tasks.get($task.attr('data-id'));
-      if (t.pinned) return;
       // Boxes without arcs move freely; connected ones slide along their rank to reorder it.
       const rank = !$task.hasClass('movable');
       if (tween) tween.stop(true, true);                       // finish any layout animation first
