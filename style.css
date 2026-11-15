@@ -720,3 +720,13 @@ html, body {
   #toolbar { left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); }
   #toolbar > .group { right: calc(12px + env(safe-area-inset-right)); }
 }
+
+/* ---------- Dialogs (SweetAlert2), toned down to match the editor ---------- */
+.swal2-popup { padding: 20px 20px 18px; border-radius: 12px; font-size: 14px; }
+.swal2-popup .swal2-title { padding: 4px 8px 0; font-size: 18px; font-weight: 600; color: #1f2328; }
+.swal2-popup .swal2-html-container { margin: 10px 8px 0; font-size: 14px; color: #57606a; }
+.swal2-popup .swal2-input { height: 38px; margin: 14px 8px 4px; font-size: 15px; border-radius: 6px; }
+.swal2-popup .swal2-actions { margin-top: 16px; }
+.swal2-popup .swal2-styled { padding: 7px 16px; font-size: 14px; border-radius: 6px; }
+.swal2-popup .swal2-icon { margin: 8px auto 4px; font-size: 11px; }   /* its size is in em */
+.swal2-popup .swal2-validation-message { font-size: 13px; }

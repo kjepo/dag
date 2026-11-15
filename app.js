@@ -14,6 +14,57 @@ $(function () {
   // Put the cursor back in the task field, but not on touch screens, where that
   // would pop up the on-screen keyboard.
   const finePointer = window.matchMedia('(pointer: fine)').matches;
+
+  // ---------------------------------------------------------------- dialogs
+  // SweetAlert2 when it has loaded, the browser's own dialogs otherwise.
+  const hasSwal = typeof window.Swal !== 'undefined';
+  const dialog = hasSwal ? window.Swal.mixin({
+    width: '26em',
+    reverseButtons: true,             // Cancel on the left, the action on the right
+    confirmButtonColor: '#0969da',
+    cancelButtonColor: '#6e7781',
+    returnFocus: true,
+  }) : null;
+  // While a dialog is open, the editor's own keys (Esc, !, undo…) stay out of it.
+  // Registered first, so it runs before the other document key handlers.
+  $(document).on('keydown', e => { if (hasSwal && window.Swal.isVisible()) e.stopImmediatePropagation(); });
+
+  // Ask for a line of text; resolves to it, or null when cancelled.
+  async function askText({ title, text = '', value = '', confirm = 'OK', selectName = false }) {
+    if (!hasSwal) {
+      const a = window.prompt(text ? `${title}\n${text}` : title, value);
+      return a == null ? null : a;
+    }
+    const r = await dialog.fire({
+      titleText: title, text, input: 'text', inputValue: value,
+      inputAttributes: { autocomplete: 'off', spellcheck: 'false' },
+      showCancelButton: true, confirmButtonText: confirm,
+      inputValidator: v => v.trim() ? null : 'Please enter a name',
+      didOpen: () => {   // select the name without its .json, ready to be typed over
+        if (selectName) window.Swal.getInput().setSelectionRange(0, value.replace(/\.json$/i, '').length);
+      },
+    });
+    return r.isConfirmed ? r.value : null;
+  }
+  // Ask before doing something; resolves to true to go ahead.
+  async function confirmAction({ title, text = '', confirm = 'OK', danger = false }) {
+    if (!hasSwal) return window.confirm(text ? `${title}\n\n${text}` : title);
+    const r = await dialog.fire({
+      titleText: title, text, icon: danger ? 'warning' : undefined,
+      showCancelButton: true, confirmButtonText: confirm,
+      confirmButtonColor: danger ? '#cf222e' : '#0969da',
+    });
+    return r.isConfirmed;
+  }
+  // Show a link to copy by hand (when the clipboard isn't available).
+  async function showLink(url) {
+    if (!hasSwal) { window.prompt('Copy this link:', url); return; }
+    await dialog.fire({
+      titleText: 'Copy this link', input: 'text', inputValue: url,
+      inputAttributes: { readonly: 'readonly' }, confirmButtonText: 'Done',
+      didOpen: () => window.Swal.getInput().select(),
+    });
+  }
   function focusInput() { if (finePointer) $input.trigger('focus'); }
 
   // ---------------------------------------------------------------- model
@@ -1101,33 +1152,60 @@ $(function () {
   function setFileName(name) {
     fileName = name || null;
     document.title = fileName ? `${fileName} — Task DAG Editor` : 'Task DAG Editor';
+    const project = fileName ? fileName.replace(/\.json$/i, '') : '';
+    $input.attr('placeholder', project ? `New ${project} task… (Enter to add)` : 'New task… (Enter to add)');
     try {
       if (fileName) localStorage.setItem(FILE_NAME_KEY, fileName); else localStorage.removeItem(FILE_NAME_KEY);
     } catch (_) { /* storage unavailable */ }
   }
 
-  // Save as: Chrome and Edge show the system's save dialog (name and folder);
-  // other browsers ask for a name and download the file.
-  async function saveToFile() {
+  // Chrome and Edge: the file last saved or opened, so Save can write to it again.
+  let fileHandle = null;
+  const FILE_TYPES = [{ description: 'Task graph', accept: { 'application/json': ['.json'] } }];
+
+  // A name typed by the user as a file name: no path characters, ending in .json.
+  function cleanName(name) {
+    name = String(name).trim().replace(/[\\/:*?"<>|]+/g, '-');
+    if (!name) return null;
+    return /\.json$/i.test(name) ? name : name + '.json';
+  }
+
+  async function writeHandle(handle, text) {
+    const w = await handle.createWritable();
+    await w.write(text);
+    await w.close();
+  }
+
+  // Save: to the graph's name without asking (the same file again in Chrome and
+  // Edge; a download elsewhere). Save as, or Save without a name: ask for one.
+  // Chrome and Edge show the system's save dialog (name and folder); other
+  // browsers ask for a name and download the file.
+  async function saveToFile(asNew = false) {
     const text = JSON.stringify(serialize(), null, 2);
-    const suggested = fileName || 'task-graph.json';
     const saved = () => showStatus(`Saved “${fileName}” (${tasks.size} tasks, ${edges.length} dependencies)`);
+    if (!asNew && fileName) {
+      if (fileHandle) {
+        try { await writeHandle(fileHandle, text); saved(); return; }
+        catch (_) { /* no longer allowed or gone: ask where, below */ }
+      } else if (!window.showSaveFilePicker) {
+        download(text, fileName);
+        saved();
+        return;
+      }
+    }
+    const suggested = fileName || 'task-graph.json';
     if (window.showSaveFilePicker) {
       let handle;
       try {
-        handle = await window.showSaveFilePicker({
-          suggestedName: suggested,
-          types: [{ description: 'Task graph', accept: { 'application/json': ['.json'] } }],
-        });
+        handle = await window.showSaveFilePicker({ suggestedName: suggested, types: FILE_TYPES });
       } catch (err) {
         if (err.name === 'AbortError') return;      // cancelled
         // Not allowed here (e.g. inside a frame): fall back to a download.
         return downloadAs(text, suggested, saved);
       }
       try {
-        const w = await handle.createWritable();
-        await w.write(text);
-        await w.close();
+        await writeHandle(handle, text);
+        fileHandle = handle;
         setFileName(handle.name);
         saved();
       } catch (err) {
@@ -1138,38 +1216,73 @@ $(function () {
     downloadAs(text, suggested, saved);
   }
 
-  function downloadAs(text, suggested, done) {
-    let name = window.prompt('Save as:', suggested);
-    if (name == null) return;                       // cancelled
-    name = name.trim().replace(/[\\/:*?"<>|]+/g, '-') || 'task-graph.json';
-    if (!/\.json$/i.test(name)) name += '.json';
+  function download(text, name) {
     const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
     $('<a>').attr({ href: url, download: name })[0].click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  async function downloadAs(text, suggested, done) {
+    const answer = await askText({ title: 'Save as', value: suggested, confirm: 'Save', selectName: true });
+    if (answer == null) return;                     // cancelled
+    const name = cleanName(answer) || 'task-graph.json';
+    download(text, name);
+    fileHandle = null;
     setFileName(name);
     done();
   }
 
-  function openFile() { $('#file-input').val('').trigger('click'); }
+  function openText(text, name, handle = null) {
+    try {
+      const skipped = loadGraph(JSON.parse(text));
+      fileHandle = handle;
+      setFileName(name);
+      showStatus(`Opened “${name}”` + (skipped ? ` (${skipped} invalid items skipped)` : ''));
+    } catch (err) {
+      showStatus(`Could not open “${name}”: ${err.message}`, { error: true });
+    }
+  }
+
+  // Chrome and Edge: the system's open dialog, keeping the file so Save writes back to it.
+  async function openFile() {
+    if (window.showOpenFilePicker) {
+      let handle;
+      try {
+        [handle] = await window.showOpenFilePicker({ types: FILE_TYPES });
+      } catch (err) {
+        if (err.name === 'AbortError') return;      // cancelled
+        $('#file-input').val('').trigger('click');  // not allowed here: the plain file chooser
+        return;
+      }
+      try {
+        const file = await handle.getFile();
+        openText(await file.text(), file.name, handle);
+      } catch (err) {
+        showStatus('Could not open the file: ' + err.message, { error: true });
+      }
+      return;
+    }
+    $('#file-input').val('').trigger('click');
+  }
 
   $('#file-input').on('change', function () {
     const file = this.files && this.files[0];
     if (!file) return;
-    file.text().then(text => {
-      const skipped = loadGraph(JSON.parse(text));
-      setFileName(file.name);
-      showStatus(`Opened “${file.name}”` + (skipped ? ` (${skipped} invalid items skipped)` : ''));
-    }).catch(err => {
-      showStatus(`Could not open “${file.name}”: ${err.message}`, { error: true });
-    });
+    file.text().then(text => openText(text, file.name),
+      err => showStatus(`Could not open “${file.name}”: ${err.message}`, { error: true }));
   });
 
-  $('#save').on('click', saveToFile);
+  $('#save').on('click', () => saveToFile());
+  $('#save-as').on('click', () => saveToFile(true));
   $('#open').on('click', openFile);
-  $('#new').on('click', () => {
-    if (tasks.size && !window.confirm('Start a new graph? Unsaved changes will be lost.')) return;
+  $('#new').on('click', async () => {
+    const answer = await askText({
+      title: 'New graph', value: 'Untitled', confirm: 'Create', selectName: true,
+      text: tasks.size ? 'Name the new graph. It replaces this one; unsaved changes are lost (Undo brings it back).' : 'Name the new graph.',
+    });
+    if (answer == null) return;                     // cancelled
     clearGraph();
-    setFileName(null);
+    fileHandle = null;
+    setFileName(cleanName(answer));
     userMoved = false;
     changed();
   });
@@ -1185,7 +1298,7 @@ $(function () {
       if (k === 'y' || e.shiftKey) redo(); else undo();
       return;
     }
-    if (k === 's') { e.preventDefault(); saveToFile(); }
+    if (k === 's') { e.preventDefault(); saveToFile(e.shiftKey); }
     else if (k === 'o') { e.preventDefault(); openFile(); }
   });
 
@@ -1208,7 +1321,7 @@ $(function () {
   });
   // Only with a mouse: on a phone, focusing the field would pop up the keyboard on every tap.
   $(document).on('pointerup', ev => {
-    if (ev.originalEvent.pointerType === 'mouse' && !$(ev.target).closest('#props').length) $input.trigger('focus');
+    if (ev.originalEvent.pointerType === 'mouse' && !$(ev.target).closest('#props, .swal2-container').length) $input.trigger('focus');
   });
 
   // Either connector can start a connection; the opposite side of other boxes
@@ -1319,7 +1432,7 @@ $(function () {
   // Convert every task's times to the other unit. Days -> hours is exact
   // (Nov 14 – Nov 14 becomes Nov 14 00:00 – Nov 15 00:00); hours -> days drops
   // the time of day, so it asks first when there is any.
-  function switchTimeUnit(toHours) {
+  async function switchTimeUnit(toHours) {
     const conv = [...tasks.values()].map(t => {
       if (toHours) {
         const s = parseDate(t.start), e = parseDate(t.end), d = parseDays(t.duration);
@@ -1343,8 +1456,10 @@ $(function () {
         duration: d != null ? `${Math.max(1, Math.ceil(d / MIN_PER_DAY))}d` : null };
     });
     const lossy = conv.filter(c => c.lossy).length;
-    if (lossy && !window.confirm(
-      `Switch to whole days? The times of day of ${lossy} task${lossy === 1 ? '' : 's'} will be rounded to whole days.`)) return;
+    if (lossy && !await confirmAction({
+      title: 'Switch to whole days?', confirm: 'Switch',
+      text: `The times of day of ${lossy} task${lossy === 1 ? '' : 's'} will be rounded to whole days.`,
+    })) return;
     setHourMode(toHours);
     conv.forEach(({ t, start, end, duration }) => {
       t.start = start; t.end = end;
@@ -1571,9 +1686,13 @@ $(function () {
     clearTiming($(this).attr('data-key'));
   });
 
-  function deleteTask(id) {
+  async function deleteTask(id) {
     const t = tasks.get(id);
-    if (!window.confirm(`Delete “${t.name}”${hasEdges(id) ? ' and its dependencies' : ''}?`)) return;
+    if (!await confirmAction({
+      title: `Delete “${t.name}”?`, confirm: 'Delete', danger: true,
+      text: (hasEdges(id) ? 'Its dependencies are removed too. ' : '') + 'Undo brings it back.',
+    })) return;
+    if (!tasks.has(id)) return;
     closeProps();
     if (pending) cancelPending();
     edges.filter(e => e.from === id || e.to === id).forEach(e => e.el.remove());
@@ -1855,7 +1974,7 @@ $(function () {
       await navigator.clipboard.writeText(url);
       showStatus(`Link copied to the clipboard (${(url.length / 1024).toFixed(1)} KB)`);
     } catch (_) {
-      window.prompt('Copy this link:', url);   // clipboard not available (e.g. plain http)
+      showLink(url);   // clipboard not available (e.g. plain http)
     }
   }
 
@@ -1872,11 +1991,13 @@ $(function () {
       showStatus('Could not open the shared link: ' + err.message, { error: true });
       return;
     }
-    if (tasks.size && !window.confirm(
-      `Open the shared graph (${(data.tasks || []).length} tasks)? ` +
-      `It replaces the graph you have here (${tasks.size} tasks). Save that one first if you want to keep it.`)) return;
+    if (tasks.size && !await confirmAction({
+      title: `Open the shared graph (${(data.tasks || []).length} tasks)?`, confirm: 'Open',
+      text: `It replaces the graph you have here (${tasks.size} tasks). Save that one first if you want to keep it.`,
+    })) return;
     try {
       const skipped = loadGraph(data);
+      fileHandle = null;
       setFileName(null);
       showStatus('Opened shared graph' + (skipped ? ` (${skipped} invalid items skipped)` : ''));
     } catch (err) {

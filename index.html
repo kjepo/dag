@@ -53,7 +53,8 @@
         <hr>
         <button id="new" type="button" role="menuitem">New</button>
         <button id="open" type="button" role="menuitem">Open… <kbd>⌘/Ctrl O</kbd></button>
-        <button id="save" type="button" role="menuitem">Save as… <kbd>⌘/Ctrl S</kbd></button>
+        <button id="save" type="button" role="menuitem">Save <kbd>⌘/Ctrl S</kbd></button>
+        <button id="save-as" type="button" role="menuitem">Save as… <kbd>⇧⌘/Ctrl S</kbd></button>
         <button id="share" type="button" role="menuitem">Share link</button>
         <hr>
         <button id="unit-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Hours and minutes</button>
@@ -112,7 +113,8 @@
       <ul>
         <li><b>Undo</b> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd>) and <b>Redo</b> (<kbd>⇧</kbd><kbd>⌘</kbd>+<kbd>Z</kbd> or <kbd>Ctrl</kbd>+<kbd>Y</kbd>), also in the ☰ menu, step back and forth through every change since the page was opened, including New and Open. While you are typing in a field, those keys undo the typing instead.</li>
         <li>The graph is saved in this browser automatically after every change.</li>
-        <li>In the ☰ menu: <b>Save as…</b> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>S</kbd>) saves it as a file under a name you choose (in Chrome and Edge also in a folder you choose; other browsers put it in Downloads). The name is suggested again next time; <b>Open…</b> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>O</kbd>) loads one; <b>New</b> starts over.</li>
+        <li>In the ☰ menu: <b>New</b> starts over and asks for the new graph’s name. <b>Save</b> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>S</kbd>) saves it as a file under that name without asking. <b>Save as…</b> (<kbd>⇧</kbd><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>S</kbd>) asks for a name first, and so does Save when the graph has none yet. <b>Open…</b> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>O</kbd>) loads a file. The name is shown in the browser tab.</li>
+        <li>In Chrome and Edge you also choose the folder: the first Save of a new graph shows the save dialog once, and after that Save writes over the same file (or the file you opened). Other browsers put each save in Downloads.</li>
         <li><b>Share link</b> copies a link that contains the whole graph. Whoever opens it sees a snapshot of the graph as it is now; later edits need a new link. The graph is in the part after <code>#</code>, which is never sent to the server.</li>
       </ul>
     </div>
@@ -166,6 +168,7 @@
 
   <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@viz-js/viz@3.4.0/lib/viz-standalone.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.14.5/dist/sweetalert2.all.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
