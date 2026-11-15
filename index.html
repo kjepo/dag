@@ -19,6 +19,11 @@
                   markerWidth="8" markerHeight="8" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z"></path>
           </marker>
+          <!-- critical arcs are 3 wide instead of 2; the marker scales with the stroke -->
+          <marker id="arrow-critical" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="5.33" markerHeight="5.33" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z"></path>
+          </marker>
         </defs>
       </svg>
     </div>
@@ -53,6 +58,7 @@
         <hr>
         <button id="unit-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Hours and minutes</button>
         <button id="legend-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Show legend</button>
+        <button id="critical-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Critical path <kbd>!</kbd></button>
         <hr>
         <button id="help-btn" type="button" role="menuitem">Help</button>
       </div>
@@ -83,6 +89,9 @@
       <h3>Date conflicts</h3>
       <p>A task gets a <b class="red">red border</b> when its dates don’t work. Either a task it depends on ends after it starts (the arc turns red too; starting on the same day is fine), or its own end is before its start. Hover over the box to see why.</p>
       <p>When a task has both a start and an end date, its duration is calculated from them, counting both days (the same start and end is 1 day). It is shown in days and weeks, e.g. <b>5d</b>, <b>3w</b> or <b>3w 1d</b>.</p>
+
+      <h3>Critical path</h3>
+      <p>Press <kbd>!</kbd> (or use <b>Critical path</b> in the ☰ menu) to show which tasks set the end of the plan. They and the arcs between them turn <b class="orange">orange</b>: any delay there delays what comes after. Every other task gets a small label with its <i>slack</i>, how much later it could end without delaying anything, e.g. <b>+1h 15m</b> or <b>+3d</b>. The properties panel says how late it can end. A task with a <b class="red">−</b> label is behind: something after it would have to move. Missing times count as early as the dependencies allow; a task with neither dates nor a duration is left out. Press <kbd>!</kbd> again to hide it.</p>
 
       <h3>Days or hours</h3>
       <p>A graph is planned in whole days unless <b>Hours and minutes</b> is ticked in the ☰ menu; the choice is saved with the graph. In hours, start and end have a time of day and a task runs from its start up to its end: 09:00 – 11:00 is 2 hours, and a task may start at the very minute the one before it ends. Durations are written like <b>45m</b>, <b>2h 30m</b>, <b>1d 4h</b> or <b>1.5</b> (hours). When the graph covers more than one date, the boxes show the date under each time.</p>
@@ -131,6 +140,7 @@
       <input id="p-duration" type="number" min="1" step="1">
     </label>
     <p id="p-duration-hint" class="hint"></p>
+    <p id="p-slack" class="hint slack-line" hidden></p>
 
     <div id="p-suggest" class="suggest" hidden>
       <p id="p-suggest-text"></p>

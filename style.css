@@ -270,6 +270,32 @@ html, body {
 #world.vertical .task.dated .conn-in  { left: 50%; top: -8px; }
 #world.vertical .task.dated .conn-out { left: 50%; right: auto; bottom: -8px; }
 
+/* ---------- Critical path ---------- */
+.task.critical {
+  border-color: #d4700a;
+  box-shadow: 0 0 0 2px #d4700a, 0 2px 8px rgba(212,112,10,.2);   /* ring: box size unchanged */
+}
+.edge.critical .line { stroke: #d4700a; stroke-width: 3; }
+.edge.critical:hover .line { stroke: #cf222e; }
+#edges #arrow-critical path { fill: #d4700a; }
+.task .slack {
+  position: absolute;
+  top: -9px;
+  right: 10px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #57606a;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.task .slack.behind { color: #cf222e; border-color: #cf222e; }
+.slack-line.critical { color: #b35c00; }
+.help-panel .orange { color: #d4700a; }
+#menu button:has(kbd) .check { margin-left: 8px; }
+
 /* ---------- Date conflicts ---------- */
 .task.conflict {
   border-color: #cf222e;

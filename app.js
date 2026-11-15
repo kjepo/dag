@@ -477,6 +477,106 @@ $(function () {
     });
   }
 
+  // ---------------------------------------------------------------- critical path
+  // A per-browser view setting (like the legend), toggled with "!" or in the menu.
+  const CRITICAL_PREF_KEY = 'task-dag-editor:show-critical';
+  let showCritical = false;
+  try { showCritical = localStorage.getItem(CRITICAL_PREF_KEY) === '1'; } catch (_) { /* storage unavailable */ }
+
+  function topoOrder() {
+    const indeg = new Map([...tasks.keys()].map(id => [id, 0]));
+    edges.forEach(e => indeg.set(e.to, indeg.get(e.to) + 1));
+    const queue = [...indeg].filter(([, n]) => n === 0).map(([id]) => id), order = [];
+    while (queue.length) {
+      const id = queue.shift();
+      order.push(id);
+      edges.forEach(e => {
+        if (e.from !== id) return;
+        indeg.set(e.to, indeg.get(e.to) - 1);
+        if (indeg.get(e.to) === 0) queue.push(e.to);
+      });
+    }
+    return order;
+  }
+
+  // Slack (total float): how far a task's end can move before it delays a task
+  // that depends on it, or the end of the whole plan. Each task's times are its
+  // own; missing ones are as early as its dependencies allow, plus its duration.
+  // Returns { times: id -> {s, e, latestEnd, slack}, latestStart: id -> time }
+  // for the tasks whose times can be worked out.
+  function computeSlack() {
+    const order = topoOrder();
+    const preds = id => edges.filter(e => e.to === id).map(e => e.from);
+    const succs = id => edges.filter(e => e.from === id).map(e => e.to);
+    const times = new Map(), latestStart = new Map();
+    order.forEach(id => {
+      const t = tasks.get(id), d = parseDuration(t.duration);
+      let s = parseTime(t.start), e = parseTime(t.end);
+      if (s == null && e == null) {
+        const ends = preds(id).map(p => times.get(p)).filter(Boolean).map(r => r.e);
+        if (ends.length) s = Math.max(...ends);
+      }
+      if (e == null && s != null) e = d != null ? s + d - INCL() : s;
+      if (s == null && e != null) s = d != null ? e - d + INCL() : e;
+      if (s != null && e != null) times.set(id, { s, e });
+    });
+    if (!times.size) return { times, latestStart };
+    const finish = Math.max(...[...times.values()].map(r => r.e));
+    [...order].reverse().forEach(id => {
+      const r = times.get(id);
+      const after = succs(id).map(s => latestStart.get(s)).filter(v => v != null);
+      const lf = after.length ? Math.min(...after) : r ? finish : null;
+      if (r) {
+        r.latestEnd = lf;
+        r.slack = lf - r.e;
+        latestStart.set(id, lf - (r.e - r.s));
+      } else if (lf != null) {
+        latestStart.set(id, lf);   // times unknown: pass the constraint on to the tasks before it
+      }
+    });
+    return { times, latestStart };
+  }
+
+  function slackText(r) {
+    const long = formatDuration(durationValue(Math.abs(r.slack))).long;
+    const by = displayValue(formatTime(r.latestEnd));
+    if (r.slack === 0) return 'Critical: any delay here delays what comes after it.';
+    if (r.slack > 0) return `Slack: ${long}. It can end as late as ${by} without delaying anything.`;
+    return `Behind by ${long}: it would have to end by ${by} for the later dates to hold.`;
+  }
+
+  function updateCritical() {
+    const { times, latestStart } = showCritical ? computeSlack() : { times: new Map(), latestStart: new Map() };
+    tasks.forEach((t, id) => {
+      const r = times.get(id) || null;
+      t.slack = r;
+      t.$el.toggleClass('critical', !!r && r.slack <= 0);
+      t.$el.children('.slack').remove();
+      if (r && r.slack !== 0) {
+        const f = formatDuration(durationValue(Math.abs(r.slack))).short;
+        $('<span class="slack">').toggleClass('behind', r.slack < 0)
+          .text((r.slack < 0 ? '−' : '+') + f).attr('title', slackText(r)).appendTo(t.$el);
+      }
+    });
+    edges.forEach(e => {
+      const a = times.get(e.from), b = times.get(e.to);
+      // The arc that sets the latest end of a critical task.
+      e.critical = !!(a && b && a.slack <= 0 && b.slack <= 0 && latestStart.get(e.to) === a.latestEnd);
+      e.el.classList.toggle('critical', e.critical);
+      e.el.querySelector('.line').setAttribute('marker-end',
+        e.conflict ? 'url(#arrow-conflict)' : e.critical ? 'url(#arrow-critical)' : 'url(#arrow)');
+    });
+  }
+
+  function setShowCritical(v) {
+    showCritical = v;
+    $('#critical-toggle').attr('aria-checked', String(v));
+    try { localStorage.setItem(CRITICAL_PREF_KEY, v ? '1' : '0'); } catch (_) { /* storage unavailable */ }
+    updateCritical();
+    if (selectedId) fillProps();
+    showStatus(v ? 'Critical path shown' : 'Critical path hidden');
+  }
+
   function updateHiddenEdges() {
     edges.forEach(e => {
       e.hidden = isTransitive(e);
@@ -876,6 +976,7 @@ $(function () {
     updateShowDates();
     updateHiddenEdges();
     updateConflicts();
+    updateCritical();
     updateMovable();
     layout();
     if (selectedId) fillProps();
@@ -1171,6 +1272,16 @@ $(function () {
   }
   $('#legend-toggle').attr('aria-checked', String(showLegend))
     .on('click', () => setShowLegend(!showLegend));
+  $('#critical-toggle').attr('aria-checked', String(showCritical))
+    .on('click', () => setShowCritical(!showCritical));
+  // "!" toggles the critical path, unless it's being typed into a field.
+  $(document).on('keydown', e => {
+    if (e.key !== '!' || e.metaKey || e.ctrlKey) return;
+    const el = e.target;
+    if ($(el).is('input, textarea') && !(el === $input[0] && el.value === '')) return;
+    e.preventDefault();
+    setShowCritical(!showCritical);
+  });
 
   $('#direction, #direction-menu').on('click', () => {
     setVertical(!vertical);
@@ -1360,6 +1471,8 @@ $(function () {
       (d != null ? formatDuration(durationValue(d)).long + '. ' : '') +
       (both ? `Calculated from the ${hourMode ? 'times' : 'dates'}; changing it moves the end.`
             : 'Set two of start, end and duration and the third is filled in.'));
+    $('#p-slack').prop('hidden', !t.slack).text(t.slack ? slackText(t.slack) : '')
+      .toggleClass('critical', !!t.slack && t.slack.slack <= 0);
 
     // × buttons: only for values the task really has (not suggestions). The duration
     // follows from the dates when both are set, so clear one of those instead.

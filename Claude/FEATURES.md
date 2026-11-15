@@ -1,16 +1,9 @@
 # Feature ideas
 
-Candidates for the task DAG editor, roughly in order of value. Undo/redo, the
-first item on the original list, is done.
+Candidates for the task DAG editor, roughly in order of value. Done: undo/redo, and the
+critical path with slack (toggle with "!").
 
 ## Scheduling
-
-### Critical path and slack
-Highlight the chain of tasks that determines the end date, and show how much
-each other task can slip without delaying it (e.g. in the dinner party, "Bake
-dessert" has about 7 hours of slack). All the data is already there: dates or
-durations plus dependencies. This is the classic question a dependency graph
-answers.
 
 ### Auto-schedule
 One menu item that fills in every missing start and end from durations and
