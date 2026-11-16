@@ -886,6 +886,12 @@ $(function () {
   }
 
   function cancelPending() {
+    if (connDrag && connDrag.el) {   // Esc while dragging an arc
+      connDrag.el.remove();
+      $world.find('.task.drop-target').removeClass('drop-target');
+      $canvas.removeClass('linking');
+      connDrag = null;
+    }
     if (!pending) return;
     pending = null;
     refreshConnectors();
@@ -1610,25 +1616,31 @@ $(function () {
 
   // Either connector can start a connection; the opposite side of other boxes
   // then turns green. Clicking a green one completes the edge.
+  // Finish the pending connection at task `id` (the other end of the arc).
+  function completePending(id) {
+    const edge = candidateEdge(id);
+    const problem = edgeProblem(edge.from, edge.to);
+    if (problem) { showStatus(problem, { error: true }); return; }
+    cancelPending();
+    const implied = descendants(edge.from).has(edge.to);
+    const added = addEdge(edge.from, edge.to);
+    changed();
+    if (added.conflict) {
+      const a = tasks.get(edge.from), b = tasks.get(edge.to);
+      showStatus(`Date conflict: “${b.name}” starts before “${a.name}” ends`, { error: true });
+    } else if (implied) {
+      showStatus(`“${tasks.get(edge.from).name}” already comes before “${tasks.get(edge.to).name}” through other tasks, so this arc is not drawn`);
+    }
+  }
+
   $world.on('click', '.conn', function (e) {
     e.stopPropagation();
+    if (suppressClick) return;   // the end of dragging an arc
     const side = $(this).hasClass('conn-in') ? 'in' : 'out';
     const id = connTask($(this).closest('.task').attr('data-id'), side);
 
     if (pending && pending.side !== side && nodeOf(pending.id) !== nodeOf(id)) {
-      const edge = candidateEdge(id);
-      const problem = edgeProblem(edge.from, edge.to);
-      if (problem) { showStatus(problem, { error: true }); return; }
-      cancelPending();
-      const implied = descendants(edge.from).has(edge.to);
-      const added = addEdge(edge.from, edge.to);
-      changed();
-      if (added.conflict) {
-        const a = tasks.get(edge.from), b = tasks.get(edge.to);
-        showStatus(`Date conflict: “${b.name}” starts before “${a.name}” ends`, { error: true });
-      } else if (implied) {
-        showStatus(`“${tasks.get(edge.from).name}” already comes before “${tasks.get(edge.to).name}” through other tasks, so this arc is not drawn`);
-      }
+      completePending(id);
     } else if (pending && nodeOf(pending.id) === nodeOf(id) && pending.side === side) {
       cancelPending();
     } else {
@@ -2308,6 +2320,48 @@ $(function () {
   let boxDrag = null;           // moving a box
   let drag = null;              // panning
   let pinch = null;             // two-finger zoom
+  let connDrag = null;          // dragging a new arc out of a connector
+
+  // ---- dragging an arc: from a connector to any part of another box
+  function worldPoint(e) {
+    const r = $canvas[0].getBoundingClientRect();
+    return { x: (e.clientX - r.left - view.x) / view.k, y: (e.clientY - r.top - view.y) / view.k };
+  }
+  // The task the arc would connect to with the pointer at (clientX, clientY), if it can.
+  function dropTarget(e) {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const nodeId = el && $(el).closest('#world .task').attr('data-id');
+    if (!nodeId || nodeId === nodeOf(pending.id)) return null;
+    const id = connTask(nodeId, pending.side === 'in' ? 'out' : 'in');
+    const c = candidateEdge(id);
+    return { id, nodeId, problem: edgeProblem(c.from, c.to) };
+  }
+  function moveConnDrag(e) {
+    const own = nodeObj(nodeOf(pending.id));
+    const t = dropTarget(e), target = t && !t.problem ? t : null;
+    $world.find('.task.drop-target').removeClass('drop-target');
+    let other;
+    if (target) {
+      other = nodeObj(target.nodeId);
+      other.$el.addClass('drop-target');
+    } else {   // a zero-size box at the pointer, positioned so the arc ends (or starts) there
+      const p = worldPoint(e), out = pending.side === 'out';
+      other = { x: p.x + (out && !vertical ? ARROW_GAP : 0), y: p.y + (out && vertical ? ARROW_GAP : 0), w: 0, h: 0, cy: 0 };
+    }
+    const d = pending.side === 'out' ? edgePath(own, other) : edgePath(other, own);
+    connDrag.el.querySelector('.line').setAttribute('d', d);
+    connDrag.target = t;
+  }
+  function endConnDrag(e, drop) {
+    const { el, target } = connDrag;
+    connDrag = null;
+    el.remove();
+    $world.find('.task.drop-target').removeClass('drop-target');
+    $canvas.removeClass('linking');
+    if (drop && target && !target.problem) { completePending(target.id); return; }
+    cancelPending();
+    if (drop && target) showStatus(target.problem, { error: true });   // e.g. it would make a cycle
+  }
 
   function pointerPair() {
     const [a, b] = [...pointers.values()];
@@ -2335,7 +2389,9 @@ $(function () {
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointers.size === 2) {
-      // Second finger: switch to pinch-zoom; abandon any pan or box move.
+      // Second finger: switch to pinch-zoom; abandon any pan, box move or new arc.
+      if (connDrag && connDrag.moved) endConnDrag(e, false);
+      connDrag = null;
       if (boxDrag) {
         const { t, x0, y0, moved } = boxDrag;
         t.$el.removeClass('dragging drag-invalid');
@@ -2351,7 +2407,13 @@ $(function () {
     }
     if (pointers.size > 2) return;
 
-    if ($(e.target).closest('.conn, .edge').length) return;   // handled by their click handlers
+    const $conn = $(e.target).closest('.conn');
+    if ($conn.length) {   // a click is handled by the click handler; a drag draws a new arc
+      const side = $conn.hasClass('conn-in') ? 'in' : 'out';
+      connDrag = { id: connTask($conn.closest('.task').attr('data-id'), side), side, mx: e.clientX, my: e.clientY, moved: false };
+      return;
+    }
+    if ($(e.target).closest('.edge').length) return;   // handled by its click handler
     const $task = $(e.target).closest('.task');
     if ($task.length) {
       const t = tasks.get($task.attr('data-id'));
@@ -2378,6 +2440,26 @@ $(function () {
       view.x = p.mid.x - wx * k;
       view.y = p.mid.y - wy * k;
       applyView();
+      return;
+    }
+
+    if (connDrag) {
+      if (!connDrag.moved) {
+        if (Math.hypot(e.clientX - connDrag.mx, e.clientY - connDrag.my) < 4) return;
+        connDrag.moved = true;
+        startPending(connDrag.id, connDrag.side);
+        showStatus('Drop the arc on another task (Esc to cancel)', { sticky: true });
+        const g = document.createElementNS(SVGNS, 'g');
+        g.setAttribute('class', 'edge drag-edge');
+        const line = document.createElementNS(SVGNS, 'path');
+        line.setAttribute('class', 'line');
+        line.setAttribute('marker-end', 'url(#arrow)');
+        g.appendChild(line);
+        $edgeLayer[0].appendChild(g);
+        connDrag.el = g;
+        $canvas.addClass('linking');
+      }
+      moveConnDrag(e);
       return;
     }
 
@@ -2424,6 +2506,16 @@ $(function () {
         const rest = [...pointers.values()][0];
         drag = rest ? { x: rest.x, y: rest.y, vx: view.x, vy: view.y, moved: true } : null;
       }
+      return;
+    }
+
+    if (connDrag) {
+      if (connDrag.moved) {
+        suppressClick = true;                      // not a click on the connector or the box
+        setTimeout(() => { suppressClick = false; }, 0);
+        endConnDrag(e, e.type === 'pointerup');
+      }
+      connDrag = null;
       return;
     }
 

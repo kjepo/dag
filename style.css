@@ -795,3 +795,8 @@ html, body {
   background: #f6f8fa;
 }
 @media (pointer: coarse) { .fold-hint { display: none; } }   /* no Shift key on a phone */
+
+/* ---------- Dragging a new arc ---------- */
+#canvas.linking, #canvas.linking * { cursor: crosshair; }
+.edge.drag-edge .line { stroke: #1a7f37; stroke-dasharray: 6 4; pointer-events: none; }
+.task.drop-target { border-color: #1a7f37; box-shadow: 0 0 0 2px #2da44e, 0 4px 12px rgba(45,164,78,.2); }
