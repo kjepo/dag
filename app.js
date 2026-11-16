@@ -1622,15 +1622,25 @@ $(function () {
     const problem = edgeProblem(edge.from, edge.to);
     if (problem) { showStatus(problem, { error: true }); return; }
     cancelPending();
+    connect(edge.from, edge.to);
+  }
+  // Add the arc from -> to (already checked with edgeProblem) and say if it is
+  // special; returns true when it did.
+  function connect(from, to) {
+    const edge = { from, to };
     const implied = descendants(edge.from).has(edge.to);
     const added = addEdge(edge.from, edge.to);
     changed();
     if (added.conflict) {
       const a = tasks.get(edge.from), b = tasks.get(edge.to);
       showStatus(`Date conflict: “${b.name}” starts before “${a.name}” ends`, { error: true });
-    } else if (implied) {
-      showStatus(`“${tasks.get(edge.from).name}” already comes before “${tasks.get(edge.to).name}” through other tasks, so this arc is not drawn`);
+      return true;
     }
+    if (implied) {
+      showStatus(`“${tasks.get(edge.from).name}” already comes before “${tasks.get(edge.to).name}” through other tasks, so this arc is not drawn`);
+      return true;
+    }
+    return false;
   }
 
   $world.on('click', '.conn', function (e) {
@@ -1737,6 +1747,25 @@ $(function () {
     .on('click', () => setShowLegend(!showLegend));
   $('#critical-toggle').attr('aria-checked', String(showCritical))
     .on('click', () => setShowCritical(!showCritical));
+  // "<": an arc from the second newest task to the newest one, so that typing
+  // "Shop", Enter, "Cook", Enter, < makes "Shop" come before "Cook".
+  function linkNewest() {
+    const [b, a] = [...tasks.values()].sort((x, y) => parseInt(y.id.slice(1), 10) - parseInt(x.id.slice(1), 10));
+    if (!a) { showStatus('Add two tasks first'); return; }
+    const problem = edgeProblem(a.id, b.id);
+    if (problem) { showStatus(problem, { error: true }); return; }
+    if (foldOf.has(a.id) || foldOf.has(b.id)) { showStatus('One of them is folded; unfold it first', { error: true }); return; }
+    cancelPending();
+    if (!connect(a.id, b.id)) showStatus(`Connected “${a.name}” → “${b.name}”`);
+  }
+  $(document).on('keydown', e => {
+    if (e.key !== '<' || e.metaKey || e.ctrlKey) return;
+    const el = e.target;
+    if ($(el).is('input, textarea') && !(el === $input[0] && el.value === '')) return;
+    e.preventDefault();
+    linkNewest();
+  });
+
   // "!" toggles the critical path, unless it's being typed into a field.
   $(document).on('keydown', e => {
     if (e.key !== '!' || e.metaKey || e.ctrlKey) return;
