@@ -89,6 +89,20 @@ $(function () {
   // meaning a comes before b (above it; left of it when vertical).
   let orderHints = [];
   const rankOf = new Map();  // id -> rank (column/row) key from the last layout
+  // Folded groups: the tasks from an entry task to an exit task, shown as one box.
+  // Only the entry has arcs coming in from outside, only the exit has arcs going out.
+  // The tasks stay in the model (dates, conflicts, critical path) but are hidden.
+  const folds = new Map();   // id ('f1') -> {id, name, entry, exit, members: Set, start, end, x, y, w, h, cy, o, $el}
+  const foldOf = new Map();  // task id -> id of the fold that hides it
+  let nextFoldId = 1;
+  function nodeOf(id) { return foldOf.get(id) || id; }               // the box that shows a task
+  function nodeObj(id) { return tasks.get(id) || folds.get(id); }
+  function shownNodes() { return [...[...tasks.values()].filter(t => !foldOf.has(t.id)), ...folds.values()]; }
+  function isInternal(e) { return foldOf.has(e.from) && foldOf.get(e.from) === foldOf.get(e.to); }
+  // Arcs between boxes as shown: [from box, to box] (arcs inside a fold left out).
+  function nodeEdges(all = false) {
+    return edges.filter(e => !isInternal(e) && (all || !e.hidden)).map(e => [nodeOf(e.from), nodeOf(e.to)]);
+  }
 
   // ---------------------------------------------------------------- view
   const view = { x: 0, y: 0, k: 1 };
@@ -208,7 +222,7 @@ $(function () {
     }
 
     rankIds.forEach(ids => {
-      const spans = ids.map(id => taskSpan(tasks.get(id))).filter(Boolean);
+      const spans = ids.map(id => taskSpan(nodeObj(id))).filter(Boolean);
       if (!spans.length) return;                      // no dated task in this column
       const { text, title } = label({ s: Math.min(...spans.map(r => r.s)), e: Math.max(...spans.map(r => r.e)) });
       const $el = $('<div class="legend-label">').text(text).attr('title', title).appendTo($legend);
@@ -223,7 +237,7 @@ $(function () {
     const centres = legend.ranks.map(r => {
       let sum = 0;
       r.ids.forEach(id => {
-        const t = tasks.get(id);
+        const t = nodeObj(id);
         sum += vertical ? t.y + t.h / 2 : t.x + t.w / 2;   // graphviz centres each rank
       });
       return (sum / r.ids.length) * view.k + (vertical ? view.y : view.x);
@@ -322,7 +336,9 @@ $(function () {
   }
 
   function addTask(name) {
-    createTask({ id: 't' + nextId++, name });
+    const id = 't' + nextId++;
+    createTask({ id, name });
+    focusId = id;   // bring the new box into view
     if (pending) refreshConnectors();
     changed();
   }
@@ -469,8 +485,9 @@ $(function () {
   }
 
   function drawEdge(e) {
-    const useSpline = splinesOn && e.spline && freeMoving !== e.from && freeMoving !== e.to;
-    const d = useSpline ? splinePath(e.spline) : edgePath(tasks.get(e.from), tasks.get(e.to));
+    const a = nodeOf(e.from), b = nodeOf(e.to);
+    const useSpline = splinesOn && e.spline && freeMoving !== a && freeMoving !== b;
+    const d = useSpline ? splinePath(e.spline) : edgePath(nodeObj(a), nodeObj(b));
     for (const p of e.el.querySelectorAll('path')) p.setAttribute('d', d);
     // An arc with its own wait shows it halfway along.
     const label = e.el.querySelector('.wait-label');
@@ -506,7 +523,8 @@ $(function () {
   // Hour mode works in minutes since 1970: "2026-11-15T09:30" (a bare date is midnight).
   const MIN_PER_DAY = 1440;
   function parseDateTime(v) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?$/.exec(v == null ? '' : String(v).trim());
+    // Seconds (some browsers' date-time fields include them) are accepted and ignored.
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?)?$/.exec(v == null ? '' : String(v).trim());
     return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)) / 60000 : null;
   }
   function isoFromMinute(n) { return new Date(n * 60000).toISOString().slice(0, 16); }
@@ -579,6 +597,11 @@ $(function () {
       t.problems = list;
       t.$el.toggleClass('conflict', list.length > 0)
         .attr('title', list.length ? 'Date conflict:\n• ' + list.join('\n• ') : null);
+    });
+    folds.forEach(f => {
+      const bad = [...f.members].filter(id => tasks.get(id).problems.length);
+      f.$el.toggleClass('conflict', bad.length > 0).attr('title', 'A folded group of tasks. Click to unfold it.' +
+        (bad.length ? '\n\nDate conflict in ' + bad.map(id => `“${tasks.get(id).name}”`).join(', ') : ''));
     });
   }
 
@@ -661,6 +684,16 @@ $(function () {
           .text((r.slack < 0 ? '−' : '+') + f).attr('title', slackText(r)).appendTo(t.$el);
       }
     });
+    folds.forEach(f => {
+      const rs = [...f.members].map(id => times.get(id)).filter(Boolean);
+      const least = rs.length ? Math.min(...rs.map(r => r.slack)) : null;
+      f.$el.toggleClass('critical', least != null && least <= 0);
+      f.$el.children('.slack').remove();
+      if (least != null && least !== 0) {
+        const fmt = formatDuration(durationValue(Math.abs(least))).short;
+        $('<span class="slack">').toggleClass('behind', least < 0).text((least < 0 ? '−' : '+') + fmt).appendTo(f.$el);
+      }
+    });
     edges.forEach(e => {
       const a = times.get(e.from), b = times.get(e.to);
       // The arc that sets the latest end of a critical task.
@@ -682,9 +715,149 @@ $(function () {
 
   function updateHiddenEdges() {
     edges.forEach(e => {
-      e.hidden = e.wait == null && isTransitive(e);   // an arc with its own wait always shows
+      // An arc with its own wait always shows; arcs inside a folded group never do.
+      e.hidden = isInternal(e) || (e.wait == null && isTransitive(e));
       e.el.style.display = e.hidden ? 'none' : '';
     });
+  }
+
+
+  // ---------------------------------------------------------------- folded groups
+  function ancestors(id) {
+    const seen = new Set([id]);
+    const stack = [id];
+    while (stack.length) {
+      const cur = stack.pop();
+      for (const e of edges) {
+        if (e.to === cur && !seen.has(e.from)) { seen.add(e.from); stack.push(e.from); }
+      }
+    }
+    return seen;
+  }
+
+  // The tasks on the paths from a to b (in either order), if they form a closed
+  // group: arcs from outside may only go to the first task, and arcs to the
+  // outside may only leave from the last. Returns {entry, exit, members} or {error}.
+  function foldRegion(a, b) {
+    const A = tasks.get(a), B = tasks.get(b);
+    if (!A || !B || a === b) return { error: 'Pick two different tasks' };
+    let down = descendants(a);
+    if (!down.has(b)) {
+      if (!descendants(b).has(a)) return { error: `“${A.name}” and “${B.name}” aren’t connected by a path of arcs` };
+      [a, b] = [b, a];
+      down = descendants(a);
+    }
+    const up = ancestors(b);
+    const members = new Set([...down].filter(id => up.has(id)));
+    const name = id => `“${tasks.get(id).name}”`;
+    for (const e of edges) {
+      const inFrom = members.has(e.from), inTo = members.has(e.to);
+      if (inTo && !inFrom && e.to !== a) {
+        return { error: `${name(e.to)} also depends on ${name(e.from)}, outside the group. Only ${name(a)} may have arcs coming in.` };
+      }
+      if (inFrom && !inTo && e.from !== b) {
+        return { error: `${name(e.to)}, outside the group, depends on ${name(e.from)}. Only ${name(b)} may have arcs going out.` };
+      }
+    }
+    return { entry: a, exit: b, members };
+  }
+
+  function createFold({ id, name, entry, exit, members }) {
+    const f = { id, name: name || `${tasks.get(entry).name} … ${tasks.get(exit).name}`, entry, exit, members, x: 0, y: 0, o: 0 };
+    f.$el = $('<div class="task fold">').attr('data-id', id)
+      .attr('title', 'A folded group of tasks. Click to unfold it.').append(
+        $('<div class="conn conn-in" title="Click, then pick a green connector to connect (to the first task in the group)">'),
+        $('<div class="name">'),
+        $('<dl class="fields">'),
+        $('<div class="conn conn-out" title="Click, then pick a green connector to connect (from the last task in the group)">')
+      ).css({ opacity: 0 }).appendTo($world);
+    // Fade in where the group's first task was.
+    const at = tasks.get(entry);
+    Object.assign(f, { x: at.x, y: at.y });
+    f.$el.css({ left: at.x, top: at.y });
+    folds.set(id, f);
+    members.forEach(m => { foldOf.set(m, id); tasks.get(m).$el.addClass('folded'); });
+    renderFold(f);
+    return f;
+  }
+
+  // Box contents: the name, how many tasks, and the span from the earliest start to the latest end.
+  function renderFold(f) {
+    const ts = [...f.members].map(id => tasks.get(id));
+    const starts = ts.map(t => parseTime(t.start) ?? parseTime(t.end)).filter(v => v != null);
+    const ends = ts.map(t => parseTime(t.end) ?? parseTime(t.start)).filter(v => v != null);
+    f.start = starts.length ? formatTime(Math.min(...starts)) : null;
+    f.end = ends.length ? formatTime(Math.max(...ends)) : null;
+    f.$el.toggleClass('dated', !!(f.start && f.end));
+    f.$el.find('.name').empty().append(
+      $('<span class="fold-mark" aria-hidden="true">▸</span>'),
+      document.createTextNode(f.name),
+      $('<span class="fold-count">').text(`${ts.length} tasks`));
+    f.$el.find('.fields').empty().append(
+      field('Start', f.start, formatTimeField),
+      field('Duration', derivedDuration(f.start, f.end), formatDuration),
+      field('End', f.end, formatTimeField));
+    f.w = f.$el.outerWidth();
+    f.h = f.$el.outerHeight();
+    const border = parseFloat(f.$el.css('border-top-width')) || 0;
+    const dividerY = f.$el.find('.name')[0].offsetHeight - 0.5;
+    f.$el[0].style.setProperty('--divider', dividerY + 'px');
+    f.cy = border + dividerY;
+  }
+
+  function dropFold(f) {
+    folds.delete(f.id);
+    f.$el.remove();
+    f.members.forEach(id => {
+      const t = tasks.get(id);
+      if (!t) return;
+      foldOf.delete(id);
+      // Come out of the folded box.
+      Object.assign(t, { x: f.x, y: f.y, o: 0 });
+      t.$el.removeClass('folded').css({ left: f.x, top: f.y, opacity: 0 });
+    });
+  }
+
+  // Before every layout: a group whose tasks or arcs changed so that it is no
+  // longer closed opens up; the others get their dates refreshed.
+  function refreshFolds() {
+    folds.forEach(f => {
+      const r = foldRegion(f.entry, f.exit);
+      if (r.error || r.entry !== f.entry) { dropFold(f); return; }
+      f.members.forEach(id => { if (!r.members.has(id)) { foldOf.delete(id); tasks.get(id)?.$el.removeClass('folded'); } });
+      f.members = r.members;
+      f.members.forEach(id => { foldOf.set(id, f.id); tasks.get(id).$el.addClass('folded'); });
+      renderFold(f);
+    });
+  }
+
+  function expandFold(id, opts = {}) {
+    const f = folds.get(id);
+    if (!f) return;
+    if (pending) cancelPending();
+    dropFold(f);
+    changed();
+    if (!opts.quiet) showStatus(`Unfolded “${f.name}”`);
+  }
+
+  async function collapseBetween(a, b) {
+    const r = foldRegion(a, b);
+    if (r.error) { showStatus(r.error, { error: true }); return; }
+    if ([...r.members].some(id => foldOf.has(id))) { showStatus('Part of that is already folded', { error: true }); return; }
+    const first = tasks.get(r.entry).name, last = tasks.get(r.exit).name, n = r.members.size;
+    const name = await askText({
+      title: `Fold ${n} tasks into one box?`,
+      text: `Everything from “${first}” to “${last}”. Click the box to unfold it again.`,
+      value: `${first} … ${last}`, confirm: 'Fold',
+    });
+    if (name == null) return;
+    const again = foldRegion(r.entry, r.exit);   // the graph may have changed while asking
+    if (again.error || [...again.members].some(id => foldOf.has(id))) { showStatus(again.error || 'Part of that is already folded', { error: true }); return; }
+    closeProps();
+    if (pending) cancelPending();
+    createFold({ id: 'f' + nextFoldId++, name: name.trim(), ...again });
+    changed();
+    showStatus(`Folded ${n} tasks into “${name.trim()}”`);
   }
 
   // ---------------------------------------------------------------- connecting
@@ -695,10 +868,17 @@ $(function () {
       : { from: pending.id, to: otherId };
   }
 
+  // The task a box's connector stands for: a fold's incoming connector is its
+  // entry task's, its outgoing one its exit task's.
+  function connTask(nodeId, side) {
+    const f = folds.get(nodeId);
+    return f ? (side === 'in' ? f.entry : f.exit) : nodeId;
+  }
+
   function startPending(id, side) {
     pending = { id, side };
     refreshConnectors();
-    const name = tasks.get(id).name;
+    const name = nodeObj(nodeOf(id)).name;
     const question = side === 'in'
       ? `which task must finish before “${name}”?`
       : `which task must wait for “${name}”?`;
@@ -717,11 +897,12 @@ $(function () {
     if (!pending) return;
     const own = pending.side === 'in' ? '.conn-in' : '.conn-out';
     const other = pending.side === 'in' ? '.conn-out' : '.conn-in';
-    tasks.get(pending.id).$el.find(own).addClass('active');
-    tasks.forEach((t, id) => {
-      if (id === pending.id) return;
-      const e = candidateEdge(id);
-      t.$el.find(other).addClass(edgeProblem(e.from, e.to) ? 'blocked' : 'available');
+    const mine = nodeOf(pending.id);
+    nodeObj(mine).$el.find(own).addClass('active');
+    shownNodes().forEach(n => {
+      if (n.id === mine) return;
+      const e = candidateEdge(connTask(n.id, pending.side === 'in' ? 'out' : 'in'));
+      n.$el.find(other).addClass(edgeProblem(e.from, e.to) ? 'blocked' : 'available');
     });
   }
 
@@ -743,7 +924,7 @@ $(function () {
   function earliestLevels() {
     const level = new Map();
     const preds = new Map();
-    edges.forEach(e => { if (!preds.has(e.to)) preds.set(e.to, []); preds.get(e.to).push(e.from); });
+    nodeEdges(true).forEach(([from, to]) => { if (!preds.has(to)) preds.set(to, []); preds.get(to).push(from); });
     const depth = id => {
       if (level.has(id)) return level.get(id);
       level.set(id, 0);   // (the graph is acyclic; this only guards against surprises)
@@ -751,7 +932,7 @@ $(function () {
       level.set(id, d);
       return d;
     };
-    tasks.forEach((t, id) => { if (hasEdges(id) && !t.pinned) depth(id); });
+    shownNodes().forEach(n => { if (hasEdges(n.id) && !n.pinned) depth(n.id); });
     return level;
   }
 
@@ -768,19 +949,19 @@ $(function () {
     ];
     // Boxes without arcs all get the same size, so layout() can shuffle them
     // between their slots to put them in date order.
-    const loose = [...tasks.values()].filter(t => !t.pinned && !hasEdges(t.id));
+    const loose = shownNodes().filter(t => !t.pinned && isLoose(t));
     const looseW = Math.max(0, ...loose.map(t => t.w));
     const looseH = Math.max(0, ...loose.map(t => vertical ? t.h : layoutHeight(t)));
-    tasks.forEach(t => {
+    shownNodes().forEach(t => {
       if (t.pinned) return;   // placed by hand, not by graphviz
       // Horizontal: graphviz lines nodes up by their centres. Give each node a height
       // that is symmetric around the divider, so the dividers (where the arcs attach) line up.
-      const isLoose = !hasEdges(t.id);
-      const w = isLoose ? looseW : t.w;
-      const h = isLoose ? looseH : vertical ? t.h : layoutHeight(t);
+      const loosely = isLoose(t);
+      const w = loosely ? looseW : t.w;
+      const h = loosely ? looseH : vertical ? t.h : layoutHeight(t);
       lines.push(`  ${q(t.id)} [width=${(w / 72).toFixed(3)}, height=${(h / 72).toFixed(3)}];`);
     });
-    edges.forEach(e => { if (!e.hidden) lines.push(`  ${q(e.from)} -> ${q(e.to)};`); });
+    nodeEdges().forEach(([from, to]) => lines.push(`  ${q(from)} -> ${q(to)};`));
     // Each task as early as its predecessors allow: same rank for all tasks at the
     // same depth (longest path from a task with no predecessors).
     const levels = new Map();
@@ -824,7 +1005,10 @@ $(function () {
     return p;
   }
 
-  function hasEdges(id) { return edges.some(e => e.from === id || e.to === id); }
+  // Does box `id` (a task or a fold) have arcs to other boxes?
+  function hasEdges(id) { return edges.some(e => !isInternal(e) && (nodeOf(e.from) === id || nodeOf(e.to) === id)); }
+  // A task box without arcs: laid out in date order in the free slots, and movable by hand.
+  function isLoose(n) { return tasks.has(n.id) && !hasEdges(n.id); }
 
   // Boxes without arcs can be dragged; once they get an arc, graphviz places them again.
   function updateMovable() {
@@ -855,7 +1039,7 @@ $(function () {
     const H = parseFloat(g.bb.split(',')[3]);
     const m = new Map();
     (g.objects || []).forEach(o => {
-      if (!o.pos || !tasks.has(o.name)) return;
+      if (!o.pos || !nodeObj(o.name)) return;
       const [cx, cy] = o.pos.split(',').map(Number);
       m.set(o.name, Math.round(vertical ? H - cy : cx));
     });
@@ -899,19 +1083,19 @@ $(function () {
       const rankMap = new Map();   // graphviz rank coordinate -> task ids in that column/row
       const slots = [];            // centres graphviz gave the boxes without arcs
       (g.objects || []).forEach(o => {
-        const t = tasks.get(o.name);
+        const t = nodeObj(o.name);
         if (!t || !o.pos) return;
         const [cx, cy] = o.pos.split(',').map(Number);
         // graphviz y points up; horizontally the divider sits on the node centre
         targets[o.name] = { x: cx - t.w / 2, y: (H - cy) - (vertical ? t.h / 2 : t.cy) };
-        if (!hasEdges(t.id)) slots.push({ cx, cy: H - cy });
+        if (isLoose(t)) slots.push({ cx, cy: H - cy });
         const key = Math.round(vertical ? H - cy : cx);
         if (!rankMap.has(key)) rankMap.set(key, []);
         rankMap.get(key).push(o.name);
       });
       // Graphviz doesn't keep the input order of unconnected boxes; put them in
       // order ourselves (top to bottom, or left to right when vertical).
-      const loose = looseOrder([...tasks.values()].filter(t => targets[t.id] && !hasEdges(t.id)));
+      const loose = looseOrder(shownNodes().filter(t => targets[t.id] && isLoose(t)));
       slots.sort((a, b) => vertical ? a.cx - b.cx || a.cy - b.cy : a.cy - b.cy || a.cx - b.cx);
       loose.forEach((t, i) => {
         const c = slots[i];
@@ -920,9 +1104,9 @@ $(function () {
       buildLegend([...rankMap.entries()].sort((a, b) => a[0] - b[0]).map(([, ids]) => ids));
       // Hand-placed boxes stay put, unless the new layout now covers them;
       // then they move to the nearest free spot.
-      const placed = Object.keys(targets).map(id => rectAt(tasks.get(id), targets[id]));
+      const placed = Object.keys(targets).map(id => rectAt(nodeObj(id), targets[id]));
       tasks.forEach(t => {
-        if (!t.pinned) return;
+        if (!t.pinned || foldOf.has(t.id)) return;
         t.pinned = freeSpot(t, t.pinned, placed);
         targets[t.id] = t.pinned;
         placed.push(rectAt(t, t.pinned));
@@ -951,6 +1135,21 @@ $(function () {
     };
   }
 
+  // A new task to bring into view with the next layout (see animateTo).
+  let focusId = null;
+  // The view that shows `box` (at the current zoom): unchanged (null) when it is
+  // already fully visible, otherwise centred on it.
+  function revealView(box) {
+    const { cw, ch, padLeft, padRight, padTop, padBottom } = viewFrame([]);
+    const k = view.k, sx = view.x + box.x * k, sy = view.y + box.y * k;
+    if (sx >= padLeft && sy >= padTop && sx + box.w * k <= cw - padRight && sy + box.h * k <= ch - padBottom) return null;
+    return {
+      k,
+      x: padLeft + (cw - padLeft - padRight) / 2 - (box.x + box.w / 2) * k,
+      y: padTop + (ch - padTop - padBottom) / 2 - (box.y + box.h / 2) * k,
+    };
+  }
+
   // The whole graph in view, zoomed in up to maxK (100% unless asked otherwise).
   function fitView(boxes, maxK = 1) {
     const { empty, minX, minY, bw, bh, cw, ch, padLeft, padRight, padTop, padBottom } = viewFrame(boxes);
@@ -965,8 +1164,8 @@ $(function () {
 
   function currentBoxes(targets) {
     const boxes = [];
-    tasks.forEach((t, id) => {
-      const p = (targets && targets[id]) || t;
+    shownNodes().forEach(t => {
+      const p = (targets && targets[t.id]) || t;
       boxes.push({ x: p.x, y: p.y, w: t.w, h: t.h });
     });
     return boxes;
@@ -976,10 +1175,11 @@ $(function () {
     if (tween) tween.stop();
     splinesOn = false;
     freeMoving = null;
-    edges.forEach(e => { e.spline = routes[`${e.from}>${e.to}`] || null; });
+    edges.forEach(e => { e.spline = routes[`${nodeOf(e.from)}>${nodeOf(e.to)}`] || null; });
 
     const from = {};
-    tasks.forEach((t, id) => {
+    shownNodes().forEach(t => {
+      const id = t.id;
       if (!targets[id]) return;
       if (t.fresh) { t.x = targets[id].x; t.y = targets[id].y; t.fresh = false; }  // new boxes fade in place
       from[id] = { x: t.x, y: t.y, o: t.o };
@@ -992,7 +1192,11 @@ $(function () {
       userMoved = true;
     }
     const v0 = { ...view };
-    const v1 = userMoved ? null : fitView(currentBoxes(targets));
+    let v1 = userMoved ? null : fitView(currentBoxes(targets));
+    // After panning or zooming by hand the view stays put, except to show a new task.
+    const reveal = userMoved && focusId && targets[focusId];
+    if (reveal) v1 = revealView({ ...targets[focusId], w: tasks.get(focusId).w, h: tasks.get(focusId).h });
+    focusId = null;
     const lerp = (a, b, s) => a + (b - a) * s;
 
     tween = $({ s: 0 }).animate({ s: 1 }, {
@@ -1000,13 +1204,13 @@ $(function () {
       easing: 'swing',
       step(s) {
         for (const id in from) {
-          const t = tasks.get(id), f = from[id], to = targets[id];
+          const t = nodeObj(id), f = from[id], to = targets[id];
           t.x = lerp(f.x, to.x, s);
           t.y = lerp(f.y, to.y, s);
           t.o = lerp(f.o, 1, s);
           t.$el.css({ left: t.x, top: t.y, opacity: t.o });
         }
-        if (v1 && !userMoved) {
+        if (v1 && (reveal || !userMoved)) {
           view.x = lerp(v0.x, v1.x, s);
           view.y = lerp(v0.y, v1.y, s);
           view.k = lerp(v0.k, v1.k, s);
@@ -1071,6 +1275,7 @@ $(function () {
       })),
       edges: edges.map(e => ({ from: e.from, to: e.to, ...(e.wait != null ? { wait: e.wait } : {}) })),
       ...(orderHints.length ? { order: orderHints.map(h => [...h]) } : {}),
+      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, entry: f.entry, exit: f.exit })) } : {}),
     };
   }
 
@@ -1079,6 +1284,7 @@ $(function () {
   // quick successive edits with the same key become one undo step.
   function changed(opts = {}) {
     updateShowDates();
+    refreshFolds();
     updateHiddenEdges();
     updateConflicts();
     updateCritical();
@@ -1126,12 +1332,12 @@ $(function () {
   // Put the graph back to a snapshot; boxes slide from where they are now.
   function restoreState(json) {
     const sel = selectedId;
-    const prev = new Map([...tasks].map(([id, t]) => [id, { x: t.x, y: t.y }]));
+    const prev = new Map([...tasks, ...folds].map(([id, t]) => [id, nodeObj(nodeOf(id))]).map(([id, n]) => [id, { x: n.x, y: n.y }]));
     if (pending) cancelPending();
     restoring = true;
     try { loadGraph(JSON.parse(json), { keepView: true, prev }); } finally { restoring = false; }
     undoHistory.lastKey = null;
-    if (sel && tasks.has(sel)) openProps(sel);
+    if (sel && tasks.has(sel) && !foldOf.has(sel)) openProps(sel);
     updateUndoButtons();
   }
   function undo() {
@@ -1156,6 +1362,10 @@ $(function () {
     tasks.clear();
     edges.forEach(e => e.el.remove());
     edges = [];
+    folds.forEach(f => f.$el.remove());
+    folds.clear();
+    foldOf.clear();
+    nextFoldId = 1;
     orderHints = [];
     graphWait = null;
     updateWaitMenu();
@@ -1196,6 +1406,20 @@ $(function () {
     if (Array.isArray(data.order)) {
       orderHints = data.order.filter(h => Array.isArray(h) && h.length === 2 &&
         tasks.has(h[0]) && tasks.has(h[1]) && h[0] !== h[1]).map(h => [h[0], h[1]]);
+    }
+    if (Array.isArray(data.folds)) {
+      data.folds.forEach(f => {
+        if (!f || typeof f.id !== 'string' || !/^f\d+$/.test(f.id) || folds.has(f.id)) return;
+        const r = foldRegion(f.entry, f.exit);
+        if (r.error) return;   // no longer a closed group: show its tasks
+        const fold = createFold({ id: f.id, name: typeof f.name === 'string' && f.name.trim() ? f.name : null, ...r });
+        const was = opts.prev && opts.prev.get(f.id);
+        if (was) {
+          Object.assign(fold, { x: was.x, y: was.y, o: 1 });
+          fold.$el.css({ left: was.x, top: was.y, opacity: 1 });
+        }
+        nextFoldId = Math.max(nextFoldId, parseInt(f.id.slice(1), 10) + 1);
+      });
     }
     if (!opts.keepView) {
       userMoved = false;
@@ -1388,10 +1612,10 @@ $(function () {
   // then turns green. Clicking a green one completes the edge.
   $world.on('click', '.conn', function (e) {
     e.stopPropagation();
-    const id = $(this).closest('.task').attr('data-id');
     const side = $(this).hasClass('conn-in') ? 'in' : 'out';
+    const id = connTask($(this).closest('.task').attr('data-id'), side);
 
-    if (pending && pending.side !== side && pending.id !== id) {
+    if (pending && pending.side !== side && nodeOf(pending.id) !== nodeOf(id)) {
       const edge = candidateEdge(id);
       const problem = edgeProblem(edge.from, edge.to);
       if (problem) { showStatus(problem, { error: true }); return; }
@@ -1405,7 +1629,7 @@ $(function () {
       } else if (implied) {
         showStatus(`“${tasks.get(edge.from).name}” already comes before “${tasks.get(edge.to).name}” through other tasks, so this arc is not drawn`);
       }
-    } else if (pending && pending.id === id && pending.side === side) {
+    } else if (pending && nodeOf(pending.id) === nodeOf(id) && pending.side === side) {
       cancelPending();
     } else {
       startPending(id, side);
@@ -1521,7 +1745,8 @@ $(function () {
     hourMode = v;
     $('#unit-toggle').attr('aria-checked', String(v));
     $('#props').toggleClass('hours', v);
-    $('#p-start, #p-end').attr('type', v ? 'datetime-local' : 'date');
+    $('#p-start, #p-end').attr('type', v ? 'datetime-local' : 'date')
+      .attr('step', v ? 60 : null);   // whole minutes: no seconds field
     $('#p-duration').attr(v ? { type: 'text', inputmode: 'text', placeholder: 'e.g. 2h 30m' }
                             : { type: 'number', inputmode: null, placeholder: null });
     $('#p-duration-label').text(v ? 'Duration' : 'Duration (days)');
@@ -1656,6 +1881,8 @@ $(function () {
   function isoOrEmpty(v) { const n = parseTime(v); return n != null ? formatTime(n) : ''; }
 
   function openProps(id) {
+    if (foldOf.has(id)) expandFold(foldOf.get(id), { quiet: true });   // e.g. picked in the dependency list
+    flushDates();
     cancelPending();
     selectedId = id;
     $world.find('.task.selected').removeClass('selected');
@@ -1665,6 +1892,7 @@ $(function () {
   }
 
   function closeProps() {
+    flushDates();
     if (!selectedId) return;
     const t = tasks.get(selectedId);
     if (t) t.$el.removeClass('selected');
@@ -1939,7 +2167,9 @@ $(function () {
 
   // Apply an edit to start / end / duration, filling in the third value when possible.
   function setTiming(t, key, value) {
-    t[key] = value === '' ? null : value;
+    // Stored in one form: "2026-11-15" (days), "2026-11-15T09:30" (hours, no seconds).
+    const n = key === 'duration' ? null : parseTime(value);
+    t[key] = value === '' ? null : n != null ? formatTime(n) : value;
     const s = parseTime(t.start), e = parseTime(t.end), d = parseDuration(t.duration), k = INCL();
     if (key === 'start' && s != null && e == null && d != null) t.end = formatTime(s + d - k);
     if (key === 'end' && e != null && s == null && d != null) t.start = formatTime(e - d + k);
@@ -1987,7 +2217,11 @@ $(function () {
 
   $world.on('click', '.task', function (e) {
     if (suppressClick || $(e.target).closest('.conn').length) return;
-    openProps($(this).attr('data-id'));
+    const id = $(this).attr('data-id');
+    if (folds.has(id)) { expandFold(id); return; }
+    // Shift-click a second task: fold up everything from the selected one to it.
+    if (e.shiftKey && selectedId && selectedId !== id) { collapseBetween(selectedId, id); return; }
+    openProps(id);
   });
 
   $('#p-name').on('input', function () {
@@ -2011,10 +2245,32 @@ $(function () {
     renderTask(t);   // the box shows a notes icon when there are notes
     changed({ coalesce: 'notes:' + t.id });
   });
-  $('#p-start').on('change', function () { setTiming(tasks.get(selectedId), 'start', this.value); });
-  $('#p-end').on('change', function () { setTiming(tasks.get(selectedId), 'end', this.value); });
+  // Start and end. Chrome reports every keystroke in a date field as a change
+  // (typing a year passes through 0002, 0020, 0202…), so while the field has
+  // focus the value is applied after a pause; leaving the field, Enter, Save,
+  // closing the panel or picking another task apply it at once.
+  const dateEdits = new Map();   // input id -> {timer, id: task id}
+  function commitDate(el) {
+    const pend = dateEdits.get(el.id);
+    if (!pend) return;
+    clearTimeout(pend.timer);
+    dateEdits.delete(el.id);
+    const t = tasks.get(pend.id);
+    const key = el.id === 'p-start' ? 'start' : 'end';
+    if (!t || el.value === isoOrEmpty(t[key])) return;   // gone, or unchanged
+    setTiming(t, key, el.value);
+  }
+  function flushDates() { ['p-start', 'p-end'].forEach(id => commitDate(document.getElementById(id))); }
+  $('#p-start, #p-end').on('change', function () {
+    if (!selectedId) return;
+    const pend = dateEdits.get(this.id);
+    if (pend) clearTimeout(pend.timer);
+    dateEdits.set(this.id, { id: selectedId, timer: setTimeout(() => commitDate(this), 800) });
+    if (document.activeElement !== this) commitDate(this);
+  }).on('blur', function () { commitDate(this); });
   $('#p-duration').on('change', function () {
     const t = tasks.get(selectedId);
+    if (!t) return;
     if (this.value.trim() === '') { setTiming(t, 'duration', ''); return; }
     if (hourMode) {
       const n = parseMinutes(this.value);
@@ -2031,6 +2287,10 @@ $(function () {
   $('#props-close').on('click', closeProps);
   $('#p-accept').on('click', acceptSuggestion);
   $('#p-delete').on('click', () => deleteTask(selectedId));
+  // Keep the field being edited focused when pressing Save / Delete: blurring it
+  // first would apply it and re-fill the panel, which can move the button away
+  // from under the pointer before the click lands.
+  $props.find('.prop-actions button').on('mousedown', e => e.preventDefault());
   $('#p-save').on('click', () => {
     // Commit the field being edited (date/number inputs only fire change on blur), then close.
     const el = document.activeElement;
@@ -2095,6 +2355,7 @@ $(function () {
     const $task = $(e.target).closest('.task');
     if ($task.length) {
       const t = tasks.get($task.attr('data-id'));
+      if (!t) return;   // a folded group: clicking it opens it
       // Boxes without arcs move freely; connected ones slide along their rank to reorder it.
       const rank = !$task.hasClass('movable');
       if (tween) tween.stop(true, true);                       // finish any layout animation first
@@ -2134,7 +2395,7 @@ $(function () {
       }
       t.x = boxDrag.x0 + dx;
       t.y = boxDrag.y0 + dy;
-      const others = [...tasks.values()].filter(o => o !== t).map(o => rectAt(o, o));
+      const others = shownNodes().filter(o => o !== t).map(o => rectAt(o, o));
       boxDrag.invalid = overlapsAny(rectAt(t, t), others);
       t.$el.css({ left: t.x, top: t.y }).addClass('dragging').toggleClass('drag-invalid', boxDrag.invalid);
       return;

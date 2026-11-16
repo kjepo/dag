@@ -12,16 +12,16 @@
       <svg id="edges" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
-                  markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                  markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="16" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z"></path>
           </marker>
           <marker id="arrow-conflict" viewBox="0 0 10 10" refX="9" refY="5"
-                  markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                  markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="16" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z"></path>
           </marker>
-          <!-- critical arcs are 3 wide instead of 2; the marker scales with the stroke -->
+          <!-- userSpaceOnUse: same arrowhead size whatever the stroke width (critical arcs are thicker) -->
           <marker id="arrow-critical" viewBox="0 0 10 10" refX="9" refY="5"
-                  markerWidth="5.33" markerHeight="5.33" orient="auto-start-reverse">
+                  markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="16" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z"></path>
           </marker>
         </defs>
@@ -99,6 +99,9 @@
       <h3>Critical path</h3>
       <p>Press <kbd>!</kbd> (or use <b>Critical path</b> in the ☰ menu) to show which tasks set the end of the plan. They and the arcs between them turn <b class="orange">orange</b>: any delay there delays what comes after. Every other task gets a small label with its <i>slack</i>, how much later it could end without delaying anything, e.g. <b>+1h 15m</b> or <b>+3d</b>. The properties panel says how late it can end. A task with a <b class="red">−</b> label is behind: something after it would have to move. Missing times count as early as the dependencies allow; a task with neither dates nor a duration is left out. Press <kbd>!</kbd> again to hide it.</p>
 
+      <h3>Folding</h3>
+      <p>A part of the graph that has one way in and one way out can be folded into a single box. Click its first task, then <kbd>Shift</kbd>-click its last task (or the other way round), and give the group a name. All tasks on the paths between the two are folded, as long as no arc comes in from outside except to the first task and none goes out except from the last. The box looks like a stack of cards. It shows how many tasks it holds and the span from the earliest start to the latest end. It turns <b class="orange">orange</b> or <b class="red">red</b> when a task inside is critical or in conflict. Connect arcs to it as to any box: they go to the first task or from the last. Click the box to unfold it. Folded groups are saved with the graph.</p>
+
       <h3>Days or hours</h3>
       <p>A graph is planned in whole days unless <b>Hours and minutes</b> is ticked in the ☰ menu; the choice is saved with the graph. In hours, start and end have a time of day and a task runs from its start up to its end: 09:00 – 11:00 is 2 hours, and a task may start at the very minute the one before it ends. Durations are written like <b>45m</b>, <b>2h 30m</b>, <b>1d 4h</b> or <b>1.5</b> (hours). When the graph covers more than one date, the boxes show the date under each time.</p>
       <p>Switching from days to hours keeps everything: a task on Nov 14 becomes Nov 14 00:00 – Nov 15 00:00. Switching back rounds times to whole days, after asking.</p>
@@ -136,14 +139,14 @@
       <input id="p-name" type="text" autocomplete="off">
     </label>
     <div class="prop-row">
-      <label class="prop"><span class="prop-head">Start <button type="button" class="clear" data-key="start" title="Clear the start" aria-label="Clear the start" hidden>×</button></span>
+      <label class="prop" for="p-start"><span class="prop-head">Start <button type="button" class="clear" data-key="start" title="Clear the start" aria-label="Clear the start" hidden>×</button></span>
         <input id="p-start" type="date">
       </label>
-      <label class="prop"><span class="prop-head">End <button type="button" class="clear" data-key="end" title="Clear the end" aria-label="Clear the end" hidden>×</button></span>
+      <label class="prop" for="p-end"><span class="prop-head">End <button type="button" class="clear" data-key="end" title="Clear the end" aria-label="Clear the end" hidden>×</button></span>
         <input id="p-end" type="date">
       </label>
     </div>
-    <label class="prop"><span class="prop-head"><span id="p-duration-label">Duration (days)</span> <button type="button" class="clear" data-key="duration" title="Clear the duration" aria-label="Clear the duration" hidden>×</button></span>
+    <label class="prop" for="p-duration"><span class="prop-head"><span id="p-duration-label">Duration (days)</span> <button type="button" class="clear" data-key="duration" title="Clear the duration" aria-label="Clear the duration" hidden>×</button></span>
       <input id="p-duration" type="number" min="1" step="1">
     </label>
     <p id="p-duration-hint" class="hint"></p>
@@ -165,6 +168,8 @@
     <ul id="p-before" class="deps"></ul>
     <h3>Needed by</h3>
     <ul id="p-after" class="deps"></ul>
+
+    <p class="hint fold-hint"><kbd>Shift</kbd>-click another task to fold everything between the two into one box.</p>
 
     <div class="prop-actions">
       <button id="p-delete" type="button" class="danger">Delete task</button>
