@@ -1766,6 +1766,62 @@ $(function () {
     linkNewest();
   });
 
+  // "/": split the selected task (or else the newest) into two in a row. The
+  // first part keeps the name, notes and incoming arcs; the second takes over
+  // the outgoing arcs. Dated tasks are split in the middle, so the pair still
+  // ends when the task did; an undated duration is shared out.
+  async function splitTask(t) {
+    const name = await askText({
+      title: `Split “${t.name}” in two?`,
+      text: 'The second part comes right after it, and the tasks that depended on it now wait for the second part. Name the second part:',
+      value: `${t.name} (2)`, confirm: 'Split', selectName: true,
+    });
+    if (name == null || !tasks.has(t.id) || foldOf.has(t.id)) return;
+    const s = parseTime(t.start), e = parseTime(t.end), d = parseDuration(t.duration), k = INCL();
+    const half = n => hourMode ? Math.round(n / 2) : Math.ceil(n / 2);
+    const b = { start: null, end: null, duration: null };
+    if (s != null && e != null && e >= s) {
+      const total = e - s + k, d1 = half(total);
+      if (total - d1 > 0) {
+        t.end = formatTime(s + d1 - k);
+        b.start = formatTime(s + d1 - k + NEXT());
+        b.end = formatTime(e);
+      } else {   // a single day (or no time at all): the second part comes after it
+        b.start = b.end = formatTime(e + NEXT());
+      }
+    } else {
+      if (d != null) {
+        const d1 = half(d);
+        t.duration = durationValue(d1);
+        if (d - d1 > 0) b.duration = durationValue(d - d1);
+      }
+      if (e != null) { b.end = t.end; t.end = null; }   // the pair still ends then
+    }
+    t.duration = derivedDuration(t.start, t.end) ?? t.duration;
+    renderTask(t);
+    const id = 't' + nextId++;
+    createTask({ id, name: name.trim(), ...b, locked: t.locked });
+    edges.forEach(x => { if (x.from === t.id) x.from = id; });
+    // With a graph-wide wait, the two parts still follow each other directly.
+    addEdge(t.id, id, parseDuration(graphWait) ? durationValue(0) : null);
+    orderHints = orderHints.filter(h => !h.includes(t.id));
+    focusId = id;
+    if (pending) cancelPending();
+    changed();
+    showStatus(`Split into “${t.name}” and “${name.trim()}”`, { action: { label: 'Undo', run: undo } });
+  }
+  $(document).on('keydown', e => {
+    if (e.key !== '/' || e.metaKey || e.ctrlKey) return;
+    const el = e.target;
+    if ($(el).is('input, textarea') && !(el === $input[0] && el.value === '')) return;
+    e.preventDefault();
+    const newest = [...tasks.values()].sort((x, y) => parseInt(y.id.slice(1), 10) - parseInt(x.id.slice(1), 10))[0];
+    const t = selectedId ? tasks.get(selectedId) : newest;
+    if (!t) { showStatus('Add a task first'); return; }
+    if (foldOf.has(t.id)) { showStatus('That task is folded; unfold it first', { error: true }); return; }
+    splitTask(t);
+  });
+
   // "!" toggles the critical path, unless it's being typed into a field.
   $(document).on('keydown', e => {
     if (e.key !== '!' || e.metaKey || e.ctrlKey) return;
