@@ -700,6 +700,9 @@ body.legend-bottom #status { bottom: 50px; }
 #menu [aria-checked="true"] .check { background: #0969da; }
 #menu [aria-checked="true"] .check::after { transform: translateX(12px); }
 #toolbar #menu button { padding-left: 14px; }
+.menu-slider { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px 8px 14px; font-size: 14px; color: #1f2328; }
+.menu-slider > span { display: flex; justify-content: space-between; gap: 8px; }
+.menu-slider input { width: 100%; margin: 0; accent-color: #0969da; }
 
 #toolbar { z-index: 8; }   /* keep the menu above the properties panel */
 

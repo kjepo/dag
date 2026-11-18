@@ -185,6 +185,7 @@ $(function () {
 
   // Whether to show the legend is a per-browser preference (not part of the graph). Off by default.
   const LEGEND_PREF_KEY = 'task-dag-editor:show-legend';
+  const INDENT_PREF_KEY = 'moment-dag-editor:indent';
   let showLegend = false;
   try { showLegend = localStorage.getItem(LEGEND_PREF_KEY) === '1'; } catch (_) { /* storage unavailable */ }
 
@@ -482,7 +483,9 @@ $(function () {
   // on a straight part of the line and points along it; the bend happens in between.
   const ARC_LEAD = 10;   // straight piece after the outgoing connector
   const ARC_TAIL = 20;   // straight piece before the incoming connector, longer than the arrowhead
-  const ARROW_GAP = 8;   // the arrow tip stops just outside the connector circle
+  const ARROW_GAP = 8;
+  let INDENT = 10;   // later dates in a column step this far right (set in the ☰ menu)…
+  const INDENT_STEPS = 2;   // …at most this many times   // the arrow tip stops just outside the connector circle
 
   function edgePath(a, b) {
     // Work in (along, across) coordinates: along = direction of the flow.
@@ -1401,6 +1404,32 @@ $(function () {
         targets[t.id] = { x: c.cx - t.w / 2, y: c.cy - (vertical ? t.h / 2 : t.cy) };
       });
       buildLegend([...rankMap.entries()].sort((a, b) => a[0] - b[0]).map(([, ids]) => ids));
+      // Within a column (row, when vertical), a box with a later date than the
+      // others there steps a little to the right (down): one step per later date,
+      // at most two. The arcs bend along with their ends.
+      // Graphviz centres boxes of different sizes in their column (row), so first
+      // line up their leading edges (left, or top when vertical), and indent from there.
+      const shift = {};
+      const lead = vertical ? 'y' : 'x';
+      rankMap.forEach(ids => {
+        const timeOf = id => { const n = nodeObj(id); return parseTime(tasks.has(id) ? n.time : n.start); };
+        const all = ids.filter(id => targets[id] && !isLoose(nodeObj(id)));
+        if (!all.length) return;
+        const edge = Math.min(...all.map(id => targets[id][lead]));
+        all.forEach(id => { shift[id] = edge - targets[id][lead]; });
+        const dated = all.filter(id => timeOf(id) != null);
+        const times = [...new Set(dated.map(timeOf))].sort((a, b) => a - b);
+        if (times.length > 1) dated.forEach(id => { shift[id] += Math.min(times.indexOf(timeOf(id)), INDENT_STEPS) * INDENT; });
+        all.forEach(id => { if (shift[id]) targets[id] = { ...targets[id], [lead]: targets[id][lead] + shift[id] }; });
+      });
+      Object.entries(routes).forEach(([key, r]) => {
+        const [a, b] = key.split('>');
+        const sa = shift[a] || 0, sb = shift[b] || 0;
+        if (!sa && !sb) return;
+        const n = r.pts.length - 1, axis = vertical ? 1 : 0;
+        r.pts = r.pts.map((p, i) => { const q = [...p]; q[axis] += sa + (sb - sa) * i / n; return q; });
+        if (r.tip) { r.tip = [...r.tip]; r.tip[axis] += sb; }
+      });
       // Hand-placed boxes stay put, unless the new layout now covers them;
       // then they move to the nearest free spot.
       const placed = Object.keys(targets).map(id => rectAt(nodeObj(id), targets[id]));
@@ -2056,6 +2085,16 @@ $(function () {
     buildLegend(legend.rankIds || []);
     if (!userMoved && tasks.size) animateViewTo(fitView(currentBoxes()));   // make room for it, or take it back
   }
+  // Indent later dates: a view preference, kept in this browser (not in the graph).
+  try { const v = parseInt(localStorage.getItem(INDENT_PREF_KEY), 10); if (v >= 0 && v <= 30) INDENT = v; } catch (_) { /* storage unavailable */ }
+  $('#indent').val(INDENT);
+  $('#indent-value').text(INDENT ? `${INDENT}px` : 'off');
+  $('#indent').on('input', function () {
+    INDENT = +this.value;
+    $('#indent-value').text(INDENT ? `${INDENT}px` : 'off');
+    try { localStorage.setItem(INDENT_PREF_KEY, String(INDENT)); } catch (_) { /* storage unavailable */ }
+    layout();
+  });
   $('#legend-toggle').attr('aria-checked', String(showLegend))
     .on('click', () => setShowLegend(!showLegend));
   $('#critical-toggle').attr('aria-checked', String(showCritical))
@@ -2371,6 +2410,15 @@ $(function () {
     if (show) buildTimeline();   // once shown, so the dates can be measured
   }
   $('#timeline-btn').on('click', () => toggleTimeline(true));
+  // Shift+T opens (and closes) it, unless something is being typed. (A plain t
+  // starts a new moment's name in the text field.)
+  $(document).on('keydown', e => {
+    if (e.key !== 'T' || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+    const el = e.target;
+    if ($(el).is('input, textarea, select, [contenteditable]') && !(el === $input[0] && el.value === '')) return;
+    e.preventDefault();
+    toggleTimeline($timeline.prop('hidden'));
+  });
   $('#timeline-close').on('click', () => toggleTimeline(false));
   $timeline.on('click', e => { if (e.target === $timeline[0]) toggleTimeline(false); });
   $(document).on('keydown', e => {
