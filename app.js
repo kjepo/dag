@@ -91,15 +91,35 @@ $(function () {
   // meaning a comes before b (above it; left of it when vertical).
   let orderHints = [];
   const rankOf = new Map();  // id -> rank (column/row) key from the last layout
-  // Folded groups: the moments from an entry moment to an exit moment, shown as one box.
-  // Only the entry has arcs coming in from outside, only the exit has arcs going out.
-  // The tasks stay in the model (dates, conflicts, critical path) but are hidden.
-  const folds = new Map();   // id ('f1') -> {id, name, entry, exit, members: Set, start, end, x, y, w, h, cy, o, $el}
-  const foldOf = new Map();  // task id -> id of the fold that hides it
+  // Phases (folds): the moments from an entry moment to an exit moment. Only the
+  // entry has arcs coming in from outside, only the exit has arcs going out.
+  // A closed phase is shown as one box; its moments stay in the model (dates,
+  // conflicts, critical path) but are hidden. An open phase shows its moments,
+  // kept together by graphviz (a cluster) inside a frame with the phase's name.
+  const folds = new Map();   // id ('f1') -> {id, name, entry, exit, members: Set, open, start, end, x, y, w, h, cy, o, $el, $frame}
+  const foldOf = new Map();  // task id -> id of the closed phase that hides it
   let nextFoldId = 1;
+  let nameEdit = null;       // {el, name, save}: a moment's or phase's name being edited in place
   function nodeOf(id) { return foldOf.get(id) || id; }               // the box that shows a task
   function nodeObj(id) { return tasks.get(id) || folds.get(id); }
-  function shownNodes() { return [...[...tasks.values()].filter(t => !foldOf.has(t.id)), ...folds.values()]; }
+  function shownNodes() { return [...[...tasks.values()].filter(t => !foldOf.has(t.id)), ...[...folds.values()].filter(f => f.visible && !f.open)]; }
+  // Phases nest: two phases either share no moments, or one holds all the
+  // other's moments (and more). `contains(f, ms)`: phase f holds every moment of ms
+  // and more besides, so a phase never contains itself.
+  function contains(f, ms) { return f.members.size > ms.size && [...ms].every(id => f.members.has(id)); }
+  // The moments a box stands for: a moment itself, or a phase's members.
+  function membersOf(id) { const f = folds.get(id); return f ? f.members : new Set([id]); }
+  // Why a phase with these moments can't be made (or kept) next to the others, or null.
+  function nestProblem(ms, except = null) {
+    for (const g of folds.values()) {
+      if (g === except) continue;
+      const shared = [...ms].filter(id => g.members.has(id)).length;
+      if (!shared) continue;
+      if (shared === ms.size && shared === g.members.size) return `That is already the phase “${g.name}”`;
+      if (shared !== ms.size && shared !== g.members.size) return `That would cut across the phase “${g.name}”; a phase must hold all of another phase or none of it`;
+    }
+    return null;
+  }
   function isInternal(e) { return foldOf.has(e.from) && foldOf.get(e.from) === foldOf.get(e.to); }
   // Arcs between boxes as shown: [from box, to box] (arcs inside a fold left out).
   function nodeEdges(all = false) {
@@ -354,6 +374,7 @@ $(function () {
 
   // (Re)draw a box's contents and re-measure it (the name may wrap differently).
   function renderTask(t) {
+    if (nameEdit && t.$el[0].contains(nameEdit.el)) return;   // being renamed in its box; redrawn when done
     const hasNotes = !!(t.notes && t.notes.trim());
     t.$el.find('.name').text(t.name)
       .append(t.locked ? $('<span class="lock-icon" aria-label="Locked" title="Locked: never moved automatically">').html(LOCK_ICON) : null)
@@ -493,7 +514,7 @@ $(function () {
       label.textContent = '';
     }
   }
-  function drawEdges() { edges.forEach(e => { if (!e.hidden) drawEdge(e); }); }
+  function drawEdges() { edges.forEach(e => { if (!e.hidden) drawEdge(e); }); drawFrames(); }
 
   // Transitive reduction for display: an edge A -> C is hidden when C can also
   // be reached from A through some other successor (e.g. A -> B -> C). Hidden
@@ -739,24 +760,66 @@ $(function () {
     return { entry: a, exit: b, members };
   }
 
-  function createFold({ id, name, entry, exit, members }) {
-    const f = { id, name: name || `${tasks.get(entry).name} … ${tasks.get(exit).name}`, entry, exit, members, x: 0, y: 0, o: 0 };
+  function createFold({ id, name, entry, exit, members, open = false }) {
+    const f = { id, name: name || `${tasks.get(entry).name} … ${tasks.get(exit).name}`, entry, exit, members, open, x: 0, y: 0, o: 0, visible: true };
     f.$el = $('<div class="task fold">').attr('data-id', id)
-      .attr('title', 'A phase: the moments from its first to its last, folded into one box. Click to unfold it.').append(
+      .attr('title', 'A phase: the moments from its first to its last, folded into one box. Click to open it.').append(
         $('<div class="conn conn-in" title="Click, then pick a green connector to connect (to the first moment of the phase)">'),
         $('<div class="name">'),
         $('<dl class="fields">'),
         $('<div class="conn conn-out" title="Click, then pick a green connector to connect (from the last moment of the phase)">')
       ).css({ opacity: 0 }).appendTo($world);
-    // Fade in where the phase's first moment was.
-    const at = tasks.get(entry);
+    // The frame around the moments of the open phase, behind the arcs and boxes.
+    // Its label: ▾ folds the phase, double-clicking the name renames it, × removes it.
+    f.$frame = $('<div class="phase-frame" hidden>').attr('data-phase', id).append(
+      $('<div class="phase-label">').append(
+        $('<button type="button" class="phase-fold" title="Fold the phase into one box" aria-label="Fold the phase">▾</button>'),
+        $('<span class="phase-name" title="Double-click to rename the phase">'),
+        $('<button type="button" class="phase-remove" title="Remove the phase (the moments stay)" aria-label="Remove the phase">×</button>'))
+    ).prependTo($world);
+    // Fade in where the box showing the phase's first moment was.
+    const at = nodeObj(nodeOf(entry));
     Object.assign(f, { x: at.x, y: at.y });
     f.$el.css({ left: at.x, top: at.y });
     folds.set(id, f);
-    members.forEach(m => { foldOf.set(m, id); tasks.get(m).$el.addClass('folded'); });
-    renderFold(f);
+    applyPhases();
     return f;
   }
+
+  // Work out what is shown, from which phases are open: a phase is visible when
+  // every phase around it is open; a visible closed phase is one box, and hides
+  // everything inside it; a visible open phase gets a frame. Then redraw the phases.
+  function applyPhases() {
+    const list = [...folds.values()];
+    list.forEach(f => {
+      f.visible = !list.some(g => !g.open && contains(g, f.members));
+      f.$el.css('display', f.visible && !f.open ? '' : 'none');
+      f.$frame.prop('hidden', !(f.visible && f.open));
+    });
+    foldOf.clear();
+    tasks.forEach((t, id) => {
+      // shown as the outermost closed phase that holds it
+      const closed = list.filter(f => !f.open && f.members.has(id)).sort((a, b) => b.members.size - a.members.size)[0];
+      if (closed) foldOf.set(id, closed.id);
+      t.$el.toggleClass('folded', !!closed).toggleClass('in-phase', list.some(f => f.members.has(id)));
+    });
+    // Bigger phases first in the page, so the frames of phases inside them are drawn on top.
+    // (Only when the order changes: moving a frame would end a rename in progress.)
+    const order = [...list].sort((a, b) => b.members.size - a.members.size);
+    const now = $world.children('.phase-frame').get();
+    if (order.some((f, i) => f.$frame[0] !== now[i])) [...order].reverse().forEach(f => f.$frame.prependTo($world));
+    list.forEach(renderFold);
+  }
+
+  // Boxes that newly appear (when a phase opens or goes away) come out of where it was.
+  function emergeFrom(before, x, y) {
+    shownNodes().forEach(n => {
+      if (before.has(n.id)) return;
+      Object.assign(n, { x, y, o: 0, fresh: false });
+      n.$el.css({ left: x, top: y, opacity: 0 });
+    });
+  }
+  function shownIds() { return new Set(shownNodes().map(n => n.id)); }
 
   // A fold of moments is a phase. Box contents: the name, how many moments, and
   // when it starts and ends (its earliest and latest moment).
@@ -766,69 +829,138 @@ $(function () {
     f.start = times.length ? formatTime(Math.min(...times)) : null;
     f.end = times.length ? formatTime(Math.max(...times)) : null;
     f.$el.toggleClass('dated', !!(f.start && f.end));
-    f.$el.find('.name').empty().append(
-      $('<span class="fold-mark" aria-hidden="true">▸</span>'),
-      document.createTextNode(f.name),
-      $('<span class="fold-count">').text(`Phase · ${ts.length} moments`));
+    if (!nameEdit || !f.$el[0].contains(nameEdit.el)) {   // not while it's being renamed in its box
+      f.$el.find('.name').empty().append(
+        $('<span class="fold-mark" aria-hidden="true">▸</span>'),
+        document.createTextNode(f.name),
+        $('<span class="fold-count">').text(`Phase · ${ts.length} moments`));
+    }
     f.$el.find('.fields').empty().append(
       field('Start', f.start, formatTimeField),
       field('End', f.end, formatTimeField));
-    f.w = f.$el.outerWidth();
-    f.h = f.$el.outerHeight();
-    const border = parseFloat(f.$el.css('border-top-width')) || 0;
-    const dividerY = f.$el.find('.name')[0].offsetHeight - 0.5;
-    f.$el[0].style.setProperty('--divider', dividerY + 'px');
-    f.cy = border + dividerY;
+    const nameEl = f.$frame.find('.phase-name')[0];
+    if (!nameEdit || nameEdit.el !== nameEl) nameEl.textContent = f.name;
+    if (f.visible && !f.open) {   // a hidden box has no size to measure
+      f.w = f.$el.outerWidth();
+      f.h = f.$el.outerHeight();
+      const border = parseFloat(f.$el.css('border-top-width')) || 0;
+      const dividerY = f.$el.find('.name')[0].offsetHeight - 0.5;
+      f.$el[0].style.setProperty('--divider', dividerY + 'px');
+      f.cy = border + dividerY;
+    }
   }
 
+  // Frames of the open phases, around the boxes shown inside them and the
+  // frames of open phases inside them (called with the arcs, so they follow
+  // animations and drags). Graphviz leaves a margin around each cluster, room
+  // for the frame and its name.
+  const FRAME_PAD = 10, FRAME_LABEL = 24;
+  function drawFrames() {
+    const open = [...folds.values()].filter(f => f.open && f.visible).sort((a, b) => a.members.size - b.members.size);
+    const shown = shownNodes();
+    open.forEach(f => {   // inner phases first
+      const rects = shown.filter(n => contains(f, membersOf(n.id))).map(n => ({ x: n.x, y: n.y, w: n.w, h: n.h, o: n.o }));
+      open.forEach(g => { if (g.frame && contains(f, g.members)) rects.push(g.frame); });
+      if (!rects.length) return;
+      const x0 = Math.min(...rects.map(r => r.x)), y0 = Math.min(...rects.map(r => r.y));
+      const x1 = Math.max(...rects.map(r => r.x + r.w)), y1 = Math.max(...rects.map(r => r.y + r.h));
+      f.frame = { x: x0 - FRAME_PAD, y: y0 - FRAME_PAD - FRAME_LABEL,
+                  w: x1 - x0 + 2 * FRAME_PAD, h: y1 - y0 + 2 * FRAME_PAD + FRAME_LABEL,
+                  o: Math.min(...rects.map(r => r.o)) };
+      f.$frame.css({ left: f.frame.x, top: f.frame.y, width: f.frame.w, height: f.frame.h, opacity: f.frame.o });
+    });
+    open.forEach(f => { delete f.frame; });
+  }
+
+  // Remove a phase; its moments (and any phases inside it) stay. A closed
+  // phase's contents come out of its box.
   function dropFold(f) {
+    const before = shownIds();
     folds.delete(f.id);
     f.$el.remove();
-    f.members.forEach(id => {
-      const t = tasks.get(id);
-      if (!t) return;
-      foldOf.delete(id);
-      // Come out of the folded box.
-      Object.assign(t, { x: f.x, y: f.y, o: 0 });
-      t.$el.removeClass('folded').css({ left: f.x, top: f.y, opacity: 0 });
-    });
+    f.$frame.remove();
+    applyPhases();
+    if (!f.open && f.visible) emergeFrom(before, f.x, f.y);
   }
 
-  // Before every layout: a group whose moments or arcs changed so that it is no
-  // longer closed opens up; the others get their dates refreshed.
+  // Before every layout: a phase whose moments or arcs changed so that it is no
+  // longer closed off (or that now cuts across another phase) is removed; the
+  // others take in their current moments and get their dates refreshed.
   function refreshFolds() {
     folds.forEach(f => {
       const r = foldRegion(f.entry, f.exit);
       if (r.error || r.entry !== f.entry) { dropFold(f); return; }
-      f.members.forEach(id => { if (!r.members.has(id)) { foldOf.delete(id); tasks.get(id)?.$el.removeClass('folded'); } });
       f.members = r.members;
-      f.members.forEach(id => { foldOf.set(id, f.id); tasks.get(id).$el.addClass('folded'); });
-      renderFold(f);
     });
+    folds.forEach(f => { if (folds.has(f.id) && nestProblem(f.members, f)) dropFold(f); });
+    applyPhases();
   }
 
+  // Open a closed phase: what's inside comes out of the box, in a frame. The
+  // phases inside it show as they were left, folded or open.
   function expandFold(id, opts = {}) {
     const f = folds.get(id);
+    if (!f || f.open) return;
+    if (pending) cancelPending();
+    const before = shownIds();
+    f.open = true;
+    applyPhases();
+    emergeFrom(before, f.x, f.y);
+    changed();
+    if (!opts.quiet) showStatus(`Opened the phase “${f.name}”. Click ▾ to fold it again; double-click its name to rename it.`);
+  }
+
+  // A name being typed in a phase's frame is saved first.
+  function commitPhaseName(f) {
+    if (nameEdit && f.$frame[0].contains(nameEdit.el)) endNameEdit(true);
+  }
+
+  // Fold an open phase back into one box, where its first moment is shown.
+  function foldPhase(id) {
+    const f = folds.get(id);
+    if (!f || !f.open) return;
+    commitPhaseName(f);
+    if (pending) cancelPending();
+    if (selectedId && f.members.has(selectedId)) closeProps();
+    const at = nodeObj(nodeOf(f.entry));
+    f.open = false;
+    Object.assign(f, { x: at.x, y: at.y, o: 0 });
+    f.$el.css({ left: at.x, top: at.y, opacity: 0 });
+    applyPhases();
+    changed();
+  }
+
+  function removePhase(id) {
+    const f = folds.get(id);
     if (!f) return;
+    commitPhaseName(f);
     if (pending) cancelPending();
     dropFold(f);
     changed();
-    if (!opts.quiet) showStatus(`Unfolded the phase “${f.name}”`);
+    showStatus(`Removed the phase “${f.name}”; what was in it stays`, { action: { label: 'Undo', run: undo } });
   }
 
+  // Shift-click: a phase from the selected moment to moment or folded phase `b`
+  // (a folded phase counts as its last moment when it comes after, its first otherwise).
   async function collapseBetween(a, b) {
+    const g = folds.get(b);
+    if (g) b = descendants(a).has(g.entry) ? g.exit : g.entry;
     const r = foldRegion(a, b);
     if (r.error) { showStatus(r.error, { error: true }); return; }
-    if ([...r.members].some(id => foldOf.has(id))) { showStatus('Part of that is already in a phase', { error: true }); return; }
+    const problem = nestProblem(r.members);
+    if (problem) { showStatus(problem, { error: true }); return; }
     const first = tasks.get(r.entry).name, last = tasks.get(r.exit).name, n = r.members.size;
+    const inner = [...folds.values()].filter(f => contains({ members: r.members }, f.members)).length;
     const name = await askText({
       title: `Make a phase of ${n} moments?`,
-      text: `Everything from “${first}” to “${last}” is folded into one box. Name the phase (click the box to unfold it again):`,
+      text: `Everything from “${first}” to “${last}”${inner ? `, with the ${inner === 1 ? 'phase' : `${inner} phases`} inside it,` : ''} is folded into one box. ` +
+            'Name the phase (click the box to open it again):',
       value: `${first} … ${last}`, confirm: 'Make phase',
     });
     if (name == null) return;
     const again = foldRegion(r.entry, r.exit);   // the graph may have changed while asking
-    if (again.error || [...again.members].some(id => foldOf.has(id))) { showStatus(again.error || 'Part of that is already in a phase', { error: true }); return; }
+    const problem2 = again.error || nestProblem(again.members);
+    if (problem2) { showStatus(problem2, { error: true }); return; }
     closeProps();
     if (pending) cancelPending();
     createFold({ id: 'f' + nextFoldId++, name: name.trim(), ...again });
@@ -943,19 +1075,42 @@ $(function () {
       lines.push(`  ${q(t.id)} [width=${(w / 72).toFixed(3)}, height=${(h / 72).toFixed(3)}];`);
     });
     nodeEdges().forEach(([from, to]) => lines.push(`  ${q(from)} -> ${q(to)};`));
-    // Each task as early as its predecessors allow: same rank for all tasks at the
-    // same depth (longest path from a task with no predecessors).
-    const levels = new Map();
+    // Each open phase is a cluster, which keeps its moments together and other
+    // boxes out, with a margin and a label that leave room for its frame.
+    // Graphviz refuses a node that is both in a cluster and in a rank set
+    // reaching outside it, so rank sets and order hints are kept per cluster.
+    // Phases nest, and so do their clusters. A box belongs to the innermost
+    // open phase around it ('' for none).
+    const openPhases = [...folds.values()].filter(f => f.open && f.visible).sort((x, y) => x.members.size - y.members.size);
+    const innermost = ms => (openPhases.find(f => contains(f, ms)) || { id: '' }).id;
+    const clusterOf = id => innermost(membersOf(id));
+    const groups = new Map();   // cluster id ('' for none) -> lines inside it
+    const add = (c, line) => { if (!groups.has(c)) groups.set(c, []); groups.get(c).push(line); };
+    shownNodes().forEach(n => { const c = clusterOf(n.id); if (c) add(c, `${q(n.id)};`); });
+    // Each moment as early as its predecessors allow: same rank for all moments at the
+    // same depth (longest path from a moment with no predecessors).
+    const levels = new Map();   // "cluster|level" -> ids
     earliestLevels().forEach((lvl, id) => {
-      if (!levels.has(lvl)) levels.set(lvl, []);
-      levels.get(lvl).push(q(id));
+      const k = clusterOf(id) + '|' + lvl;
+      if (!levels.has(k)) levels.set(k, []);
+      levels.get(k).push(q(id));
     });
-    levels.forEach(ids => { if (ids.length > 1) lines.push(`  { rank=same; ${ids.join('; ')}; }`); });
+    levels.forEach((ids, k) => { if (ids.length > 1) add(k.split('|')[0], `{ rank=same; ${ids.join('; ')}; }`); });
     // The user's order within a rank: invisible arcs between boxes kept in the same rank.
     hints.forEach(([a, b]) => {
+      if (clusterOf(a) !== clusterOf(b)) return;
       const [x, y] = flatReversed[vertical ? 'v' : 'h'] ? [b, a] : [a, b];
-      lines.push(`  { rank=same; ${q(x)} -> ${q(y)} [style=invis]; }`);
+      add(clusterOf(a), `{ rank=same; ${q(x)} -> ${q(y)} [style=invis]; }`);
     });
+    const cluster = (f, indent) => {
+      const label = f.name.replace(/[\\"]/g, '\\$&');
+      lines.push(`${indent}subgraph ${q('cluster_' + f.id)} { label="${label}"; labeljust=l; fontsize=13; margin=${FRAME_PAD + 4};`);
+      (groups.get(f.id) || []).forEach(l => lines.push(indent + '  ' + l));
+      openPhases.filter(g => innermost(g.members) === f.id).forEach(g => cluster(g, indent + '  '));
+      lines.push(indent + '}');
+    };
+    openPhases.filter(f => innermost(f.members) === '').forEach(f => cluster(f, '  '));
+    (groups.get('') || []).forEach(l => lines.push('  ' + l));
     lines.push('}');
     return lines.join('\n');
   }
@@ -1257,7 +1412,7 @@ $(function () {
       })),
       edges: edges.map(e => ({ from: e.from, to: e.to, ...(e.wait != null ? { wait: e.wait } : {}) })),
       ...(orderHints.length ? { order: orderHints.map(h => [...h]) } : {}),
-      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, entry: f.entry, exit: f.exit })) } : {}),
+      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, entry: f.entry, exit: f.exit, ...(f.open ? { open: true } : {}) })) } : {}),
     };
   }
 
@@ -1344,7 +1499,7 @@ $(function () {
     tasks.clear();
     edges.forEach(e => e.el.remove());
     edges = [];
-    folds.forEach(f => f.$el.remove());
+    folds.forEach(f => { f.$el.remove(); f.$frame.remove(); });
     folds.clear();
     foldOf.clear();
     nextFoldId = 1;
@@ -1394,8 +1549,8 @@ $(function () {
       data.folds.forEach(f => {
         if (!f || typeof f.id !== 'string' || !/^f\d+$/.test(f.id) || folds.has(f.id)) return;
         const r = foldRegion(f.entry, f.exit);
-        if (r.error) return;   // no longer a closed group: show its tasks
-        const fold = createFold({ id: f.id, name: typeof f.name === 'string' && f.name.trim() ? f.name : null, ...r });
+        if (r.error || nestProblem(r.members)) return;   // no longer closed off, or cutting across another: show its moments
+        const fold = createFold({ id: f.id, name: typeof f.name === 'string' && f.name.trim() ? f.name : null, ...r, open: f.open === true });
         const was = opts.prev && opts.prev.get(f.id);
         if (was) {
           Object.assign(fold, { x: was.x, y: was.y, o: 1 });
@@ -1584,11 +1739,11 @@ $(function () {
   // Keep keyboard focus in the task field: suppress focus changes on mousedown
   // everywhere except form fields and the properties panel.
   $(document).on('mousedown', e => {
-    if (!$(e.target).closest('input, select, textarea, #props').length) e.preventDefault();
+    if (!$(e.target).closest('input, select, textarea, [contenteditable], #props').length) e.preventDefault();
   });
   // Only with a mouse: on a phone, focusing the field would pop up the keyboard on every tap.
   $(document).on('pointerup', ev => {
-    if (ev.originalEvent.pointerType === 'mouse' && !$(ev.target).closest('#props, .swal2-container').length) $input.trigger('focus');
+    if (ev.originalEvent.pointerType === 'mouse' && !$(ev.target).closest('#props, .swal2-container, .phase-label, [contenteditable]').length) $input.trigger('focus');
   });
 
   // Either connector can start a connection; the opposite side of other boxes
@@ -1914,7 +2069,8 @@ $(function () {
   function isoOrEmpty(v) { const n = parseTime(v); return n != null ? formatTime(n) : ''; }
 
   function openProps(id) {
-    if (foldOf.has(id)) expandFold(foldOf.get(id), { quiet: true });   // e.g. picked in the dependency list
+    // A moment inside folded phases (e.g. picked in the dependency list): open them, outermost first.
+    while (foldOf.has(id) && !folds.get(foldOf.get(id)).open) expandFold(foldOf.get(id), { quiet: true });
     flushDates();
     cancelPending();
     selectedId = id;
@@ -2177,14 +2333,90 @@ $(function () {
     showStatus(`Deleted “${t.name}”`);
   }
 
+  let phaseOpenTimer = null;
+  const PHASE_OPEN_DELAY = 250;
   $world.on('click', '.task', function (e) {
-    if (suppressClick || $(e.target).closest('.conn').length) return;
+    if (suppressClick || $(e.target).closest('.conn, [contenteditable]').length) return;
     const id = $(this).attr('data-id');
-    if (folds.has(id)) { expandFold(id); return; }
+    // Shift-click a folded phase: a phase from the selected moment to it.
+    if (folds.has(id) && e.shiftKey && selectedId) { clearTimeout(phaseOpenTimer); collapseBetween(selectedId, id); return; }
+    if (folds.has(id)) {
+      // Open a folded phase after a moment's pause, so that a double-click can
+      // rename it instead (the second click cancels the opening).
+      clearTimeout(phaseOpenTimer);
+      if (e.detail <= 1) phaseOpenTimer = setTimeout(() => expandFold(id), PHASE_OPEN_DELAY);
+      return;
+    }
     // Shift-click a second moment: fold up everything from the selected one to it.
     if (e.shiftKey && selectedId && selectedId !== id) { collapseBetween(selectedId, id); return; }
     openProps(id);
   });
+  // An open phase's frame: ▾ folds it back, × removes the phase.
+  $world.on('click', '.phase-fold', function (e) {
+    e.stopPropagation();
+    if (!suppressClick) foldPhase($(this).closest('.phase-frame').attr('data-phase'));
+  });
+  $world.on('click', '.phase-remove', function (e) {
+    e.stopPropagation();
+    if (!suppressClick) removePhase($(this).closest('.phase-frame').attr('data-phase'));
+  });
+  // Names edited in place: double-click a moment's name in its box, or a
+  // phase's name on its frame. Enter or leaving it keeps the new name, Esc puts
+  // the old one back, and so does an empty name. (A single click on a box
+  // opens the properties panel, as before.)
+  function startNameEdit(el, name, save) {
+    if (nameEdit) endNameEdit(true);
+    el.textContent = name;   // a moment's name without its note and lock icons
+    try { el.contentEditable = 'plaintext-only'; } catch (_) { el.contentEditable = 'true'; }
+    $(el).addClass('editing');
+    nameEdit = { el, name, save };
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  function endNameEdit(keep) {
+    if (!nameEdit) return;
+    const { el, name, save } = nameEdit;
+    nameEdit = null;
+    const v = el.textContent.replace(/\s+/g, ' ').trim();
+    el.removeAttribute('contenteditable');
+    $(el).removeClass('editing');
+    save(keep && v && v !== name ? v : null);   // null: redraw with the old name
+    focusInput();
+  }
+  $world.on('dblclick', '.task:not(.fold) .name', function () {
+    const t = tasks.get($(this).closest('.task').attr('data-id'));
+    if (!t) return;
+    startNameEdit(this, t.name, v => {
+      if (v && tasks.has(t.id)) { t.name = v; renderTask(t); changed(); }
+      else renderTask(t);   // the old name, with its icons back
+    });
+  });
+  // A phase: the name on its frame (open), or in its box (folded).
+  $world.on('dblclick', '.phase-name, .task.fold .name', function () {
+    clearTimeout(phaseOpenTimer);
+    const f = folds.get($(this).closest('.phase-frame').attr('data-phase') || $(this).closest('.task').attr('data-id'));
+    if (!f) return;
+    startNameEdit(this, f.name, v => {
+      if (v && folds.has(f.id)) {
+        f.name = v;
+        renderFold(f);
+        changed();
+        showStatus(`Renamed the phase “${v}”`);
+      } else {
+        renderFold(f);
+      }
+    });
+  });
+  $world.on('keydown', '[contenteditable]', e => {
+    e.stopPropagation();   // keep the editor's own keys (!, <, /, Esc, undo…) out of it
+    if (e.key === 'Enter') { e.preventDefault(); endNameEdit(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); endNameEdit(false); }
+  });
+  $world.on('focusout', '[contenteditable]', () => endNameEdit(true));
 
   $('#p-name').on('input', function () {
     const t = tasks.get(selectedId), v = this.value.trim();
@@ -2322,6 +2554,8 @@ $(function () {
   $canvas.on('pointerdown', ev => {
     const e = ev.originalEvent;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // A phase's label, and a name being edited, handle their own pointer input.
+    if ($(e.target).closest('.phase-label, [contenteditable]').length) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointers.size === 2) {

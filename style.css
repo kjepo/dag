@@ -115,6 +115,61 @@ html, body {
 .task .field dd.undef { color: #b6bcc4; }
 .task .field dd .sub { display: block; font-size: 11px; color: #8c959f; }
 
+/* A moment's or phase's name being edited in place (double-click) */
+.editing[contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+  outline: 2px solid #0969da;
+  outline-offset: -2px;
+  background: #fff;
+}
+.task .name.editing { border-radius: 7px 7px 0 0; }
+
+/* ---------- Open phases: a frame around their moments ---------- */
+.phase-frame {
+  position: absolute;
+  border: 1.5px dashed #8c959f;
+  border-radius: 12px;
+  background: rgba(9, 105, 218, .04);
+  pointer-events: none;   /* the background still pans */
+}
+.phase-frame[hidden] { display: none; }
+.phase-label {
+  position: absolute;
+  left: 8px;
+  top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 16px);
+  pointer-events: auto;
+}
+.phase-label button {
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: #57606a;
+}
+.phase-fold { font-size: 13px; }
+.phase-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #57606a;
+  min-width: 0;
+  padding: 1px 4px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.phase-name.editing { overflow: visible; text-overflow: clip; color: #1f2328; }
+.phase-label button:hover { background: rgba(9, 105, 218, .1); color: #0969da; }
+.phase-remove { font-size: 15px; line-height: 1; }
+
 /* ---------- Connectors ---------- */
 .conn {
   position: absolute;
