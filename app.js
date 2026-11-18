@@ -2025,6 +2025,7 @@ $(function () {
   function toggleMenu(open) {
     if (open === undefined) open = $menu.prop('hidden');
     $menu.prop('hidden', !open);
+    if (open) $('#insert-after').prop('disabled', !splitTarget()).attr('title', splitTarget() ? null : 'Select one moment first');
     $menuBtn.attr('aria-expanded', String(open)).toggleClass('active', open);
   }
   $menuBtn.on('click', () => toggleMenu());
@@ -2089,15 +2090,16 @@ $(function () {
     e.preventDefault();
     insertAfterSelected();
   });
-  // Split, also in the ☰ menu: after the selected (or the one picked) moment, or else the newest.
+  // Split, also in the ☰ menu: only with exactly one moment selected (shown in
+  // the panel, or the only box picked).
+  function splitTarget() {
+    if (selectedId && !picked.size) return tasks.get(selectedId) || null;
+    return picked.size === 1 ? tasks.get([...picked][0]) || null : null;
+  }
   function insertAfterSelected() {
-    const newest = [...tasks.values()].sort((x, y) => parseInt(y.id.slice(1), 10) - parseInt(x.id.slice(1), 10))[0];
-    const one = picked.size === 1 ? [...picked][0] : null;
-    const t = selectedId ? tasks.get(selectedId) : one ? tasks.get(one) : newest;
-    if (one && !t) { showStatus('Pick a moment, not a phase', { error: true }); return; }
-    if (!t) { showStatus('Add a moment first'); return; }
-    if (foldOf.has(t.id)) { showStatus('That moment is in a phase; unfold it first', { error: true }); return; }
-    if (one) clearPicks();
+    const t = splitTarget();
+    if (!t) { showStatus('Select one moment to split', { error: true }); return; }
+    if (picked.size) clearPicks();
     insertAfter(t);
   }
   $('#insert-after').on('click', insertAfterSelected);
