@@ -58,6 +58,20 @@ $(function () {
     });
     return r.isConfirmed;
   }
+  // Delete with arcs, or reconnect around: resolves to 'reconnect', 'arcs', or null.
+  async function askDelete({ title, text }) {
+    if (!hasSwal) {
+      if (!window.confirm(`${title}\n\n${text}`)) return null;
+      return window.confirm('Reconnect around them? (Cancel deletes their arcs too.)') ? 'reconnect' : 'arcs';
+    }
+    const r = await dialog.fire({
+      titleText: title, text, icon: 'warning',
+      showCancelButton: true, showDenyButton: true,
+      confirmButtonText: 'Delete and reconnect', denyButtonText: 'Delete with arcs',
+      confirmButtonColor: '#0969da', denyButtonColor: '#cf222e',
+    });
+    return r.isConfirmed ? 'reconnect' : r.isDenied ? 'arcs' : null;
+  }
   // Ask for a date (days) or a date and time (hours); resolves to the value, or null.
   async function askDate({ title, text = '', value = '', confirm = 'OK' }) {
     if (!hasSwal) {
@@ -91,12 +105,12 @@ $(function () {
   // meaning a comes before b (above it; left of it when vertical).
   let orderHints = [];
   const rankOf = new Map();  // id -> rank (column/row) key from the last layout
-  // Phases (folds): the moments from an entry moment to an exit moment. Only the
-  // entry has arcs coming in from outside, only the exit has arcs going out.
+  // Phases (folds): any set of moments the user grouped, plus every moment on
+  // a path between two of them (so a folded phase never has arcs out and back in).
   // A closed phase is shown as one box; its moments stay in the model (dates,
   // conflicts, critical path) but are hidden. An open phase shows its moments,
   // kept together by graphviz (a cluster) inside a frame with the phase's name.
-  const folds = new Map();   // id ('f1') -> {id, name, entry, exit, members: Set, open, start, end, x, y, w, h, cy, o, $el, $frame}
+  const folds = new Map();   // id ('f1') -> {id, name, members: Set, open, start, end, x, y, w, h, cy, o, $el, $frame}
   const foldOf = new Map();  // task id -> id of the closed phase that hides it
   let nextFoldId = 1;
   let nameEdit = null;       // {el, name, save}: a moment's or phase's name being edited in place
@@ -733,9 +747,9 @@ $(function () {
     return seen;
   }
 
-  // The tasks on the paths from a to b (in either order), if they form a closed
-  // group: arcs from outside may only go to the first task, and arcs to the
-  // outside may only leave from the last. Returns {entry, exit, members} or {error}.
+  // Old files store a phase as its first and last moment: the moments on the
+  // paths from a to b (in either order), if arcs from outside only go to the
+  // first and arcs to the outside only leave from the last. Returns {members} or {error}.
   function foldRegion(a, b) {
     const A = tasks.get(a), B = tasks.get(b);
     if (!A || !B || a === b) return { error: 'Pick two different moments' };
@@ -757,17 +771,48 @@ $(function () {
         return { error: `${name(e.to)}, outside the phase, depends on ${name(e.from)}. Only ${name(b)} may have arcs going out.` };
       }
     }
-    return { entry: a, exit: b, members };
+    return { members };
   }
 
-  function createFold({ id, name, entry, exit, members, open = false }) {
-    const f = { id, name: name || `${tasks.get(entry).name} … ${tasks.get(exit).name}`, entry, exit, members, open, x: 0, y: 0, o: 0, visible: true };
+  // Moments that lie on a path from one moment of ms to another but aren't in ms.
+  function between(ms) {
+    const reach = (dir) => {
+      const seen = new Set(), stack = [...ms];
+      while (stack.length) {
+        const cur = stack.pop();
+        for (const e of edges) {
+          const [a, b] = dir ? [e.from, e.to] : [e.to, e.from];
+          if (a === cur && !seen.has(b)) { seen.add(b); stack.push(b); }
+        }
+      }
+      return seen;
+    };
+    const down = reach(true), up = reach(false);
+    return new Set([...down].filter(id => up.has(id) && !ms.has(id)));
+  }
+  // A phase's first moments (no arc in from inside it) and last ones (no arc out to inside it).
+  function phaseSources(ms) { return [...ms].filter(id => !edges.some(e => e.to === id && ms.has(e.from))); }
+  function phaseSinks(ms) { return [...ms].filter(id => !edges.some(e => e.from === id && ms.has(e.to))); }
+  // The earliest of the first moments (by time, then the order they were made), and the latest of the last.
+  function byTime(ids) {
+    return [...ids].sort((a, b) => (parseTime(tasks.get(a).time) ?? Infinity) - (parseTime(tasks.get(b).time) ?? Infinity) ||
+      parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10));
+  }
+  function firstMember(ms) { return byTime(phaseSources(ms))[0]; }
+  function lastMember(ms) { const s = byTime(phaseSinks(ms)); return s[s.length - 1]; }
+  function defaultPhaseName(ms) {
+    const a = tasks.get(firstMember(ms)).name, b = tasks.get(lastMember(ms)).name;
+    return a === b ? a : `${a} … ${b}`;
+  }
+
+  function createFold({ id, name, members, open = false }) {
+    const f = { id, name: name || defaultPhaseName(members), members, open, x: 0, y: 0, o: 0, visible: true };
     f.$el = $('<div class="task fold">').attr('data-id', id)
-      .attr('title', 'A phase: the moments from its first to its last, folded into one box. Click to open it.').append(
-        $('<div class="conn conn-in" title="Click, then pick a green connector to connect (to the first moment of the phase)">'),
+      .attr('title', 'A phase: moments folded into one box. Click to open it.').append(
+        $('<div class="conn conn-in" title="Click, then pick a green connector: the whole phase comes after that moment">'),
         $('<div class="name">'),
         $('<dl class="fields">'),
-        $('<div class="conn conn-out" title="Click, then pick a green connector to connect (from the last moment of the phase)">')
+        $('<div class="conn conn-out" title="Click, then pick a green connector: the whole phase comes before that moment">')
       ).css({ opacity: 0 }).appendTo($world);
     // The frame around the moments of the open phase, behind the arcs and boxes.
     // Its label: ▾ folds the phase, double-clicking the name renames it, × removes it.
@@ -778,7 +823,7 @@ $(function () {
         $('<button type="button" class="phase-remove" title="Remove the phase (the moments stay)" aria-label="Remove the phase">×</button>'))
     ).prependTo($world);
     // Fade in where the box showing the phase's first moment was.
-    const at = nodeObj(nodeOf(entry));
+    const at = nodeObj(nodeOf(firstMember(members)));
     Object.assign(f, { x: at.x, y: at.y });
     f.$el.css({ left: at.x, top: at.y });
     folds.set(id, f);
@@ -883,14 +928,15 @@ $(function () {
     if (!f.open && f.visible) emergeFrom(before, f.x, f.y);
   }
 
-  // Before every layout: a phase whose moments or arcs changed so that it is no
-  // longer closed off (or that now cuts across another phase) is removed; the
-  // others take in their current moments and get their dates refreshed.
+  // Before every layout: deleted moments leave their phases, and a phase takes
+  // in any moment that a new arc put between two of its moments. A phase left
+  // empty, or that now cuts across another phase, is removed.
   function refreshFolds() {
     folds.forEach(f => {
-      const r = foldRegion(f.entry, f.exit);
-      if (r.error || r.entry !== f.entry) { dropFold(f); return; }
-      f.members = r.members;
+      const ms = new Set([...f.members].filter(id => tasks.has(id)));
+      if (!ms.size) { dropFold(f); return; }
+      between(ms).forEach(id => ms.add(id));
+      f.members = ms;
     });
     folds.forEach(f => { if (folds.has(f.id) && nestProblem(f.members, f)) dropFold(f); });
     applyPhases();
@@ -922,7 +968,7 @@ $(function () {
     commitPhaseName(f);
     if (pending) cancelPending();
     if (selectedId && f.members.has(selectedId)) closeProps();
-    const at = nodeObj(nodeOf(f.entry));
+    const at = nodeObj(nodeOf(firstMember(f.members)));
     f.open = false;
     Object.assign(f, { x: at.x, y: at.y, o: 0 });
     f.$el.css({ left: at.x, top: at.y, opacity: 0 });
@@ -940,33 +986,57 @@ $(function () {
     showStatus(`Removed the phase “${f.name}”; what was in it stays`, { action: { label: 'Undo', run: undo } });
   }
 
-  // Shift-click: a phase from the selected moment to moment or folded phase `b`
-  // (a folded phase counts as its last moment when it comes after, its first otherwise).
-  async function collapseBetween(a, b) {
-    const g = folds.get(b);
-    if (g) b = descendants(a).has(g.entry) ? g.exit : g.entry;
-    const r = foldRegion(a, b);
-    if (r.error) { showStatus(r.error, { error: true }); return; }
-    const problem = nestProblem(r.members);
+  // Group the picked boxes into a new, folded phase, with any moments that lie
+  // between them, then let the user type its name in the box.
+  function groupPicked() {
+    if (picked.size < 2) { showStatus('Pick two or more boxes to group into a phase', { error: true }); return; }
+    const ms = new Set();
+    picked.forEach(id => membersOf(id).forEach(m => ms.add(m)));
+    const extra = between(ms);
+    extra.forEach(id => ms.add(id));
+    const problem = nestProblem(ms);
     if (problem) { showStatus(problem, { error: true }); return; }
-    const first = tasks.get(r.entry).name, last = tasks.get(r.exit).name, n = r.members.size;
-    const inner = [...folds.values()].filter(f => contains({ members: r.members }, f.members)).length;
-    const name = await askText({
-      title: `Make a phase of ${n} moments?`,
-      text: `Everything from “${first}” to “${last}”${inner ? `, with the ${inner === 1 ? 'phase' : `${inner} phases`} inside it,` : ''} is folded into one box. ` +
-            'Name the phase (click the box to open it again):',
-      value: `${first} … ${last}`, confirm: 'Make phase',
-    });
-    if (name == null) return;
-    const again = foldRegion(r.entry, r.exit);   // the graph may have changed while asking
-    const problem2 = again.error || nestProblem(again.members);
-    if (problem2) { showStatus(problem2, { error: true }); return; }
+    clearPicks();
     closeProps();
     if (pending) cancelPending();
-    createFold({ id: 'f' + nextFoldId++, name: name.trim(), ...again });
+    const f = createFold({ id: 'f' + nextFoldId++, members: ms });
     changed();
-    showStatus(`Made the phase “${name.trim()}” of ${n} moments`);
+    showStatus(`Made a phase of ${ms.size} moments` +
+      (extra.size ? `, with ${extra.size === 1 ? `“${tasks.get([...extra][0]).name}”, which lies` : `${extra.size} moments that lie`} between them` : '') +
+      '. Type its name, then Enter.');
+    startNameEdit(f.$el.find('.name')[0], f.name, phaseNameSaver(f));
   }
+
+  // ---------------------------------------------------------------- picking boxes
+  // Boxes picked to be grouped into a phase: Shift- (or ⌘/Ctrl-) click with a
+  // mouse; on a touch screen, press and hold a box, then tap more. While any box
+  // is picked a bar at the bottom offers "Group to phase".
+  const picked = new Set();   // ids of shown boxes (moments or folded phases)
+  const $pickbar = $('#pickbar');
+  function togglePick(id) {
+    if (pending) cancelPending();
+    if (!picked.size && selectedId && selectedId !== id && !foldOf.has(selectedId)) picked.add(selectedId);   // the moment shown in the panel
+    closeProps();
+    if (picked.has(id)) picked.delete(id); else picked.add(id);
+    showPicks();
+  }
+  function clearPicks() { picked.clear(); showPicks(); }
+  function showPicks() {
+    const shown = shownIds();
+    [...picked].forEach(id => { if (!shown.has(id)) picked.delete(id); });   // folded away, or deleted
+    $world.find('.task.picked').removeClass('picked');
+    picked.forEach(id => nodeObj(id).$el.addClass('picked'));
+    const n = picked.size;
+    $pickbar.prop('hidden', !n);
+    $('body').toggleClass('picking', n > 0);
+    $pickbar.find('.pick-count').text(n === 1 ? '1 box picked, pick more' : `${n} boxes picked`);
+    $('#pick-group').prop('disabled', n < 2);
+    $('#pick-delete').attr('title', n === 1 ? 'Delete the picked box (Delete)' : 'Delete the picked boxes (Delete)');
+  }
+  $('#pick-group').on('click', groupPicked);
+  $('#pick-cancel').on('click', clearPicks);
+  $('#pick-delete').on('click', () => deleteBoxes([...picked]));
+  $(document).on('keydown', e => { if (e.key === 'Escape' && picked.size && $help.prop('hidden')) clearPicks(); });
 
   // ---------------------------------------------------------------- connecting
   // The edge that would be created by clicking the green connector on task `otherId`.
@@ -976,11 +1046,28 @@ $(function () {
       : { from: pending.id, to: otherId };
   }
 
-  // The task a box's connector stands for: a fold's incoming connector is its
-  // entry task's, its outgoing one its exit task's.
+  // The task a box's connector stands for: a folded phase's incoming connector
+  // is its first moment's, its outgoing one its last moment's.
   function connTask(nodeId, side) {
     const f = folds.get(nodeId);
-    return f ? (side === 'in' ? f.entry : f.exit) : nodeId;
+    return f ? (side === 'in' ? firstMember(f.members) : lastMember(f.members)) : nodeId;
+  }
+  // The arcs [from, to] that connecting two boxes makes: an arc to a folded phase
+  // goes to each of its first moments, one from it leaves from each of its last
+  // ones, so the whole phase comes after (or before) the other box.
+  function boxArcs(from, to) {
+    const f = folds.get(nodeOf(from)), g = folds.get(nodeOf(to));
+    const froms = f ? phaseSinks(f.members) : [from], tos = g ? phaseSources(g.members) : [to];
+    return froms.flatMap(a => tos.map(b => [a, b]));
+  }
+  function arcProblem(from, to) {
+    const pairs = boxArcs(from, to);
+    if (pairs.length === 1) return edgeProblem(...pairs[0]);
+    if (nodeOf(from) === nodeOf(to)) return 'A moment cannot come after itself';
+    const fresh = pairs.filter(([a, b]) => !edges.some(e => e.from === a && e.to === b));
+    if (!fresh.length) return 'Those are already connected';
+    if (fresh.some(([a, b]) => descendants(b).has(a))) return 'That connection would create a cycle';
+    return null;
   }
 
   function startPending(id, side) {
@@ -1016,7 +1103,7 @@ $(function () {
     shownNodes().forEach(n => {
       if (n.id === mine) return;
       const e = candidateEdge(connTask(n.id, pending.side === 'in' ? 'out' : 'in'));
-      n.$el.find(other).addClass(edgeProblem(e.from, e.to) ? 'blocked' : 'available');
+      n.$el.find(other).addClass(arcProblem(e.from, e.to) ? 'blocked' : 'available');
     });
   }
 
@@ -1412,7 +1499,7 @@ $(function () {
       })),
       edges: edges.map(e => ({ from: e.from, to: e.to, ...(e.wait != null ? { wait: e.wait } : {}) })),
       ...(orderHints.length ? { order: orderHints.map(h => [...h]) } : {}),
-      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, entry: f.entry, exit: f.exit, ...(f.open ? { open: true } : {}) })) } : {}),
+      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, members: [...f.members], ...(f.open ? { open: true } : {}) })) } : {}),
     };
   }
 
@@ -1422,6 +1509,7 @@ $(function () {
   function changed(opts = {}) {
     updateShowDates();
     refreshFolds();
+    showPicks();
     updateHiddenEdges();
     updateConflicts();
     updateCritical();
@@ -1548,9 +1636,13 @@ $(function () {
     if (Array.isArray(data.folds)) {
       data.folds.forEach(f => {
         if (!f || typeof f.id !== 'string' || !/^f\d+$/.test(f.id) || folds.has(f.id)) return;
-        const r = foldRegion(f.entry, f.exit);
-        if (r.error || nestProblem(r.members)) return;   // no longer closed off, or cutting across another: show its moments
-        const fold = createFold({ id: f.id, name: typeof f.name === 'string' && f.name.trim() ? f.name : null, ...r, open: f.open === true });
+        let ms;
+        if (Array.isArray(f.members)) ms = new Set(f.members.filter(id => tasks.has(id)));
+        else { const r = foldRegion(f.entry, f.exit); ms = r.error ? new Set() : r.members; }   // an older file: first and last moment
+        if (!ms.size) return;
+        between(ms).forEach(id => ms.add(id));
+        if (nestProblem(ms)) return;   // cutting across another phase: show its moments
+        const fold = createFold({ id: f.id, name: typeof f.name === 'string' && f.name.trim() ? f.name : null, members: ms, open: f.open === true });
         const was = opts.prev && opts.prev.get(f.id);
         if (was) {
           Object.assign(fold, { x: was.x, y: was.y, o: 1 });
@@ -1751,10 +1843,14 @@ $(function () {
   // Finish the pending connection at task `id` (the other end of the arc).
   function completePending(id) {
     const edge = candidateEdge(id);
-    const problem = edgeProblem(edge.from, edge.to);
+    const problem = arcProblem(edge.from, edge.to);
     if (problem) { showStatus(problem, { error: true }); return; }
+    const pairs = boxArcs(edge.from, edge.to);
     cancelPending();
-    connect(edge.from, edge.to);
+    if (pairs.length === 1) { connect(...pairs[0]); return; }
+    pairs.forEach(([a, b]) => { if (!edges.some(e => e.from === a && e.to === b)) addEdge(a, b); });
+    changed();
+    showStatus(`Connected with ${pairs.length} arcs, so the whole phase follows`);
   }
   // Add the arc from -> to (already checked with edgeProblem) and say if it is
   // special; returns true when it did.
@@ -1929,6 +2025,17 @@ $(function () {
     if (!t) { showStatus('Add a moment first'); return; }
     if (foldOf.has(t.id)) { showStatus('That moment is in a phase; unfold it first', { error: true }); return; }
     insertAfter(t);
+  });
+
+  // Delete or Backspace deletes the picked boxes, or the moment in the
+  // properties panel, unless something is being typed.
+  $(document).on('keydown', e => {
+    if (e.key !== 'Delete' && e.key !== 'Backspace' || e.metaKey || e.ctrlKey || e.altKey) return;
+    const el = e.target;
+    if ($(el).is('input, textarea, select, [contenteditable]') && !(el === $input[0] && el.value === '')) return;
+    if (!picked.size && !selectedId) return;
+    e.preventDefault();
+    deleteBoxes(picked.size ? [...picked] : [selectedId]);
   });
 
   // "!" toggles the critical path, unless it's being typed into a field.
@@ -2315,22 +2422,72 @@ $(function () {
     clearTiming();
   });
 
-  async function deleteTask(id) {
-    const t = tasks.get(id);
-    if (!await confirmAction({
-      title: `Delete “${t.name}”?`, confirm: 'Delete', danger: true,
-      text: (hasEdges(id) ? 'Its arcs are removed too. ' : '') + 'Undo brings it back.',
-    })) return;
-    if (!tasks.has(id)) return;
-    closeProps();
+  // Delete moments: the picked boxes, or the one in the properties panel (a
+  // folded phase's box stands for all its moments). When arcs run through the
+  // deleted moments, ask whether to delete those arcs too or to reconnect around
+  // them: each moment before them then leads straight to each one after them.
+  async function deleteBoxes(ids) {
+    const ms = new Set();
+    ids.forEach(id => membersOf(id).forEach(m => { if (tasks.has(m)) ms.add(m); }));
+    if (!ms.size) return;
+    const names = [...ms].map(id => `“${tasks.get(id).name}”`);
+    const title = ms.size === 1 ? `Delete ${names[0]}?` : `Delete ${ms.size} moments?`;
+    const list = ms.size === 1 ? '' : (names.length > 4 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` :
+      `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`) + '. ';
+    const bridges = bridgeArcs(ms);
+    let reconnect = false;
+    if (bridges.length) {
+      const choice = await askDelete({ title,
+        text: list + `Arcs run through ${ms.size === 1 ? 'it' : 'them'}. Delete those arcs too, or reconnect around ` +
+              `${ms.size === 1 ? 'it' : 'them'}: the moments before then lead straight to the moments after ` +
+              `(${bridges.length === 1 ? 'one new arc' : `${bridges.length} new arcs`}, keeping any waits). Undo brings everything back.` });
+      if (!choice) return;
+      reconnect = choice === 'reconnect';
+    } else if (!await confirmAction({ title, confirm: 'Delete', danger: true,
+      text: list + ([...ms].some(hasEdges) ? 'Their arcs are removed too. ' : '') + 'Undo brings it back.' })) return;
+    if ([...ms].some(id => !tasks.has(id))) return;   // changed while asking
+    if (selectedId && ms.has(selectedId)) closeProps();
     if (pending) cancelPending();
-    edges.filter(e => e.from === id || e.to === id).forEach(e => e.el.remove());
-    edges = edges.filter(e => e.from !== id && e.to !== id);
-    t.$el.remove();
-    tasks.delete(id);
+    clearPicks();
+    edges.filter(e => ms.has(e.from) || ms.has(e.to)).forEach(e => e.el.remove());
+    edges = edges.filter(e => !ms.has(e.from) && !ms.has(e.to));
+    orderHints = orderHints.filter(([a, b]) => !ms.has(a) && !ms.has(b));
+    ms.forEach(id => { tasks.get(id).$el.remove(); tasks.delete(id); });
+    if (reconnect) bridges.forEach(b => addEdge(b.from, b.to, b.wait));
     if (!tasks.size) $empty.show();
     changed();
-    showStatus(`Deleted “${t.name}”`);
+    showStatus((ms.size === 1 ? `Deleted ${names[0]}` : `Deleted ${ms.size} moments`) +
+      (reconnect ? `, reconnected with ${bridges.length === 1 ? 'one arc' : `${bridges.length} arcs`}` : ''),
+      { action: { label: 'Undo', run: undo } });
+  }
+  // The arcs that reconnect around the moments ms: from each moment with an
+  // arc into ms to each moment that ms leads out to, with the longest total wait
+  // along the way (so no moment may come earlier than before). Arcs that are
+  // already there are left out.
+  function bridgeArcs(ms) {
+    const memo = new Map();   // moment in ms -> Map(moment after ms -> longest wait to it)
+    const outFrom = d => {
+      if (memo.has(d)) return memo.get(d);
+      const m = new Map();
+      memo.set(d, m);
+      const put = (s, w) => { if (!m.has(s) || m.get(s) < w) m.set(s, w); };
+      edges.filter(e => e.from === d).forEach(e => {
+        if (!ms.has(e.to)) put(e.to, waitOf(e));
+        else outFrom(e.to).forEach((w, s) => put(s, w + waitOf(e)));
+      });
+      return m;
+    };
+    const best = new Map();   // "p s" -> {from, to, w}
+    edges.filter(e => !ms.has(e.from) && ms.has(e.to)).forEach(e => {
+      outFrom(e.to).forEach((w, s) => {
+        const k = e.from + ' ' + s, total = w + waitOf(e);
+        if (!best.has(k) || best.get(k).w < total) best.set(k, { from: e.from, to: s, w: total });
+      });
+    });
+    const plain = parseDuration(graphWait) ?? 0;
+    return [...best.values()]
+      .filter(b => !edges.some(e => e.from === b.from && e.to === b.to))
+      .map(b => ({ from: b.from, to: b.to, wait: b.w === plain ? null : durationValue(b.w) }));
   }
 
   let phaseOpenTimer = null;
@@ -2338,8 +2495,8 @@ $(function () {
   $world.on('click', '.task', function (e) {
     if (suppressClick || $(e.target).closest('.conn, [contenteditable]').length) return;
     const id = $(this).attr('data-id');
-    // Shift-click a folded phase: a phase from the selected moment to it.
-    if (folds.has(id) && e.shiftKey && selectedId) { clearTimeout(phaseOpenTimer); collapseBetween(selectedId, id); return; }
+    // Shift/⌘/Ctrl-click picks a box for a phase; while boxes are picked, a plain click (or tap) does too.
+    if (e.shiftKey || e.metaKey || e.ctrlKey || picked.size) { clearTimeout(phaseOpenTimer); togglePick(id); return; }
     if (folds.has(id)) {
       // Open a folded phase after a moment's pause, so that a double-click can
       // rename it instead (the second click cancels the opening).
@@ -2347,8 +2504,6 @@ $(function () {
       if (e.detail <= 1) phaseOpenTimer = setTimeout(() => expandFold(id), PHASE_OPEN_DELAY);
       return;
     }
-    // Shift-click a second moment: fold up everything from the selected one to it.
-    if (e.shiftKey && selectedId && selectedId !== id) { collapseBetween(selectedId, id); return; }
     openProps(id);
   });
   // An open phase's frame: ▾ folds it back, × removes the phase.
@@ -2389,7 +2544,7 @@ $(function () {
   }
   $world.on('dblclick', '.task:not(.fold) .name', function () {
     const t = tasks.get($(this).closest('.task').attr('data-id'));
-    if (!t) return;
+    if (!t || picked.size) return;
     startNameEdit(this, t.name, v => {
       if (v && tasks.has(t.id)) { t.name = v; renderTask(t); changed(); }
       else renderTask(t);   // the old name, with its icons back
@@ -2399,18 +2554,20 @@ $(function () {
   $world.on('dblclick', '.phase-name, .task.fold .name', function () {
     clearTimeout(phaseOpenTimer);
     const f = folds.get($(this).closest('.phase-frame').attr('data-phase') || $(this).closest('.task').attr('data-id'));
-    if (!f) return;
-    startNameEdit(this, f.name, v => {
+    if (f && !picked.size) startNameEdit(this, f.name, phaseNameSaver(f));
+  });
+  function phaseNameSaver(f) {
+    return v => {
       if (v && folds.has(f.id)) {
         f.name = v;
         renderFold(f);
         changed();
         showStatus(`Renamed the phase “${v}”`);
-      } else {
+      } else if (folds.has(f.id)) {
         renderFold(f);
       }
-    });
-  });
+    };
+  }
   $world.on('keydown', '[contenteditable]', e => {
     e.stopPropagation();   // keep the editor's own keys (!, <, /, Esc, undo…) out of it
     if (e.key === 'Enter') { e.preventDefault(); endNameEdit(true); }
@@ -2466,7 +2623,7 @@ $(function () {
   });
   $('#props-close').on('click', closeProps);
   $('#p-accept').on('click', acceptSuggestion);
-  $('#p-delete').on('click', () => deleteTask(selectedId));
+  $('#p-delete').on('click', () => deleteBoxes([selectedId]));
   // Keep the field being edited focused when pressing Save / Delete: blurring it
   // first would apply it and re-fill the panel, which can move the button away
   // from under the pointer before the click lands.
@@ -2489,6 +2646,9 @@ $(function () {
   let drag = null;              // panning
   let pinch = null;             // two-finger zoom
   let connDrag = null;          // dragging a new arc out of a connector
+  let longPress = null;         // {timer, id, x, y}: a finger held on a box picks it
+  const LONG_PRESS = 500;
+  function cancelLongPress() { if (longPress) { clearTimeout(longPress.timer); longPress = null; } }
 
   // ---- dragging an arc: from a connector to any part of another box
   function worldPoint(e) {
@@ -2502,7 +2662,7 @@ $(function () {
     if (!nodeId || nodeId === nodeOf(pending.id)) return null;
     const id = connTask(nodeId, pending.side === 'in' ? 'out' : 'in');
     const c = candidateEdge(id);
-    return { id, nodeId, problem: edgeProblem(c.from, c.to) };
+    return { id, nodeId, problem: arcProblem(c.from, c.to) };
   }
   function moveConnDrag(e) {
     const own = nodeObj(nodeOf(pending.id));
@@ -2559,6 +2719,7 @@ $(function () {
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointers.size === 2) {
+      cancelLongPress();
       // Second finger: switch to pinch-zoom; abandon any pan, box move or new arc.
       if (connDrag && connDrag.moved) endConnDrag(e, false);
       connDrag = null;
@@ -2585,6 +2746,18 @@ $(function () {
     }
     if ($(e.target).closest('.edge').length) return;   // handled by its click handler
     const $task = $(e.target).closest('.task');
+    if ($task.length && e.pointerType !== 'mouse') {
+      // Press and hold (touch or pen): pick the box for a phase.
+      const id = $task.attr('data-id');
+      longPress = { id, x: e.clientX, y: e.clientY, fired: false, timer: setTimeout(() => {
+        if (!longPress || boxDrag && boxDrag.moved) return;
+        longPress.fired = true;
+        boxDrag = null;
+        clearTimeout(phaseOpenTimer);
+        if (!picked.has(id)) togglePick(id);
+        if (navigator.vibrate) navigator.vibrate(15);
+      }, LONG_PRESS) };
+    }
     if ($task.length) {
       const t = tasks.get($task.attr('data-id'));
       if (!t) return;   // a folded group: clicking it opens it
@@ -2600,6 +2773,7 @@ $(function () {
   $(document).on('pointermove', ev => {
     const e = ev.originalEvent;
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (longPress && !longPress.fired && Math.hypot(e.clientX - longPress.x, e.clientY - longPress.y) > 8) cancelLongPress();
 
     if (pinch && pointers.size >= 2) {
       // Keep the point under the fingers' midpoint fixed while scaling.
@@ -2668,6 +2842,13 @@ $(function () {
   $(document).on('pointerup pointercancel', ev => {
     const e = ev.originalEvent;
     if (!pointers.delete(e.pointerId)) return;
+    if (longPress) {
+      if (longPress.fired) {   // the lift after a long press is not a tap on the box
+        suppressClick = true;
+        setTimeout(() => { suppressClick = false; }, 0);
+      }
+      cancelLongPress();
+    }
 
     if (pinch) {
       if (pointers.size < 2) {
@@ -2712,7 +2893,7 @@ $(function () {
       return;
     }
 
-    if (drag && !drag.moved && e.type === 'pointerup') { cancelPending(); closeProps(); }   // tap on the background
+    if (drag && !drag.moved && e.type === 'pointerup') { cancelPending(); closeProps(); clearPicks(); }   // tap on the background
     drag = null;
     $canvas.removeClass('panning');
   });
@@ -2731,6 +2912,9 @@ $(function () {
     }
     applyView();
   }, { passive: false });
+
+  // A held finger is picking a box, not asking for the browser's menu.
+  $canvas.on('contextmenu', ev => { if (longPress || ev.originalEvent.pointerType !== 'mouse' && $(ev.target).closest('.task').length) ev.preventDefault(); });
 
   $(window).on('resize', () => {
     if (!userMoved && tasks.size) { Object.assign(view, fitView(currentBoxes())); applyView(); }

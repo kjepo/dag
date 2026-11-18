@@ -81,6 +81,7 @@
       <h3>Moment properties</h3>
       <p><b>Double-click</b> a moment’s name to rename it right in its box: type, then <kbd>Enter</kbd> (or click elsewhere) to keep it, or <kbd>Esc</kbd> to cancel.</p>
       <p>Click a box to edit its name, date and notes (a box with notes shows a small note icon; hover over the name to read them), see and remove its arcs (including ones that aren’t drawn), or delete it. The <b>×</b> next to the date clears it. A missing date is suggested (in <i>purple italics</i>) from the connected moments: as soon as the moments before it allow, or else as late as the moments after it allow. Click <b>Use suggested date</b> to keep it. <b>Auto-schedule…</b> in the ☰ menu does that for every moment at once: each moment without a date comes as soon as the moments before it allow (moments with nothing before them get a date you pick). Dates you have set are never moved, and locked moments are left alone. Changes are applied as you make them; <b>Save moment</b> (or <kbd>Enter</kbd>) confirms and closes the panel. Close with <kbd>Esc</kbd> or by clicking the background.</p>
+      <p><b>Deleting:</b> <kbd>Delete</kbd> (or <kbd>Backspace</kbd>, while nothing is being typed) deletes the moment shown in the panel, or all picked boxes (see Phases; the bar at the bottom also has a <b>Delete</b> button). A folded phase’s box deletes every moment in it. When arcs run through what is deleted, you choose: <b>Delete with arcs</b>, or <b>Delete and reconnect</b>, which links every moment before the deleted ones straight to every moment after them, with the longest total wait along the old way, so nothing may come earlier than before. Undo brings it all back.</p>
 
       <h3>Dependencies</h3>
       <p>Every box has a connector on each side. Click one: it turns <b>black</b>, and the connectors on the opposite side of the other boxes turn <b class="green">green</b>. Click a green one to draw the arc. Or press <kbd>&lt;</kbd> (with the text field empty) to connect the two newest moments: type “Entries open”, <kbd>Enter</kbd>, “Entries close”, <kbd>Enter</kbd>, <kbd>&lt;</kbd> and “Entries open” comes before “Entries close”. Or drag from a connector and drop the arc anywhere on another box; the box turns green when the arc can go there.</p>
@@ -101,9 +102,9 @@
       <p>Press <kbd>!</kbd> (or use <b>Critical path</b> in the ☰ menu) to show which moments set the date of the last moment. They and the arcs between them turn <b class="orange">orange</b>: any delay there delays what comes after. Every other moment gets a small label with its <i>slack</i>, how much later it could be without delaying anything, e.g. <b>+1h 15m</b> or <b>+3d</b>. The properties panel says how late it can be. A moment with a <b class="red">−</b> label is behind: something after it would have to move. A moment without a date counts as early as the moments before it allow; one with no dated moment before it is left out. Press <kbd>!</kbd> again to hide it.</p>
 
       <h3>Phases</h3>
-      <p>A part of the graph that has one way in and one way out can be folded into a single box: a <b>phase</b>, like “Judging”, that starts at its first moment and ends at its last. Click the first moment, then <kbd>Shift</kbd>-click the last one (or the other way round), and name the phase. All moments on the paths between the two go into it, as long as no arc comes in from outside except to the first moment and none goes out except from the last. The box looks like a stack of cards. It shows how many moments it holds, and its start and end: the dates of its first and last moment. It turns <b class="orange">orange</b> or <b class="red">red</b> when a moment inside is critical or in conflict. Connect arcs to it as to any box: they go to the first moment or from the last.</p>
+      <p>Any moments can be grouped into a <b>phase</b>, like “Judging”, shown as a single box. Pick the boxes: <kbd>Shift</kbd>-click them (or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>-click) with a mouse, or on a touch screen <b>press and hold</b> one box, then tap the others. Picked boxes get a blue outline; click or tap one again to unpick it. A bar at the bottom shows how many are picked: <b>Group to phase</b> makes the phase and lets you type its name right in the box, <b>Cancel</b> (or <kbd>Esc</kbd>, or a click on the background) unpicks them all. A moment that lies on a path between two picked moments goes into the phase too, so a phase never has arcs going out and coming back in; the same happens when a later arc puts a moment between two of its moments. The box looks like a stack of cards. It shows how many moments it holds, and its start and end: the earliest and latest date inside. It turns <b class="orange">orange</b> or <b class="red">red</b> when a moment inside is critical or in conflict. Connect arcs to it as to any box: an arc to it goes to each of its first moments, an arc from it leaves from each of its last ones, so the whole phase comes after (or before) the other moment.</p>
       <p>Click a phase’s box to <b>open</b> it: its moments come out and stay together inside a dashed frame with the phase’s name on top, so you can see which moments belong to it and edit them. Click <b>▾</b> before the name to fold them back into one box. <b>Double-click</b> the name, on the frame or on the folded box, to rename the phase right there, as with a moment’s name: type, then <kbd>Enter</kbd> (or click elsewhere) to keep it, or <kbd>Esc</kbd> to cancel. The <b>×</b> after the name removes the phase and keeps its moments. Phases, open or folded, are saved with the graph.</p>
-      <p>Phases can be <b>inside other phases</b>. Open a phase and make a phase of some of its moments, or make a bigger phase around a phase: select a moment and <kbd>Shift</kbd>-click the folded phase’s box (it counts as its last moment, or its first when it comes before the selected moment). A phase must hold all of another phase or none of it. Folding a phase hides everything inside it; opening it shows the phases inside as you left them, folded or open, each in its own frame.</p>
+      <p>Phases can be <b>inside other phases</b>. Open a phase and make a phase of some of its moments, or make a bigger phase around a phase by picking its folded box along with other boxes. A phase must hold all of another phase or none of it. Folding a phase hides everything inside it; opening it shows the phases inside as you left them, folded or open, each in its own frame.</p>
 
       <h3>Days or hours</h3>
       <p>A graph is planned in whole days unless <b>Hours and minutes</b> is ticked in the ☰ menu; the choice is saved with the graph. In hours, each moment has a time of day too. Waits are written like <b>45m</b>, <b>2h 30m</b>, <b>1d 4h</b> or <b>1.5</b> (hours). When the graph covers more than one date, the boxes show the date under each time.</p>
@@ -132,6 +133,12 @@
     </div>
   </div>
   <div id="status"></div>
+  <div id="pickbar" hidden role="toolbar" aria-label="Picked boxes">
+    <span class="pick-count"></span>
+    <button id="pick-group" type="button">Group to phase</button>
+    <button id="pick-delete" type="button">Delete</button>
+    <button id="pick-cancel" type="button" title="Unpick all (Esc)">Cancel</button>
+  </div>
 
   <aside id="props" hidden aria-labelledby="props-title">
     <header>
@@ -164,7 +171,7 @@
     <h3>Comes before</h3>
     <ul id="p-after" class="deps"></ul>
 
-    <p class="hint fold-hint"><kbd>Shift</kbd>-click another moment to make a phase of everything between the two.</p>
+    <p class="hint fold-hint"><kbd>Shift</kbd>-click other boxes to pick them for a phase.</p>
 
     <div class="prop-actions">
       <button id="p-delete" type="button" class="danger">Delete moment</button>

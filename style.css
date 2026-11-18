@@ -856,3 +856,44 @@ html, body {
 #canvas.linking, #canvas.linking * { cursor: crosshair; }
 .edge.drag-edge .line { stroke: #1a7f37; stroke-dasharray: 6 4; pointer-events: none; }
 .task.drop-target { border-color: #1a7f37; box-shadow: 0 0 0 2px #2da44e, 0 4px 12px rgba(45,164,78,.2); }
+
+/* ---------- Picking boxes for a phase ---------- */
+/* The box's own border turns blue too, so a dated box (dark border) looks like the others. */
+.task.picked { border-color: #0969da; outline: 3px solid #0969da; outline-offset: 2px; }
+#canvas { -webkit-touch-callout: none; }   /* holding a box picks it; no iOS callout */
+#pickbar {
+  position: fixed;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 32px);
+  padding: 8px 8px 8px 14px;
+  border-radius: 10px;
+  background: #1f2328;
+  color: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+  box-shadow: 0 4px 18px rgba(0,0,0,.22);
+}
+#pickbar[hidden] { display: none; }
+#pickbar button {
+  padding: 6px 12px; font: inherit; font-weight: 600; color: #fff; cursor: pointer;
+  background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.35); border-radius: 6px;
+}
+#pickbar #pick-group { background: #0969da; border-color: #0969da; }
+#pickbar #pick-delete:hover { background: #cf222e; border-color: #cf222e; }
+#pickbar #pick-group:disabled { opacity: .45; cursor: default; }
+body.legend-bottom #pickbar { bottom: calc(50px + env(safe-area-inset-bottom)); }
+/* Messages go above the bar while it is up (on a phone they are at the top). */
+@media (min-width: 641px) {
+  body.picking #status { bottom: 74px; }
+  body.picking.legend-bottom #status { bottom: 108px; }
+}
+@media (max-width: 640px) {
+  #pickbar { left: calc(12px + env(safe-area-inset-left)); transform: none; max-width: calc(100% - 96px); }
+  #pickbar .pick-count { overflow: hidden; text-overflow: ellipsis; }
+}
