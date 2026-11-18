@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-  <title>Task DAG Editor</title>
+  <title>Moment DAG Editor</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -28,11 +28,11 @@
       </svg>
     </div>
     <div id="legend" hidden></div>
-    <div id="empty">Type a task name and press <kbd>Enter</kbd></div>
+    <div id="empty">Type the name of a moment and press <kbd>Enter</kbd></div>
   </div>
 
   <div id="toolbar">
-    <input id="task-input" type="text" placeholder="New task… (Enter to add)" autocomplete="off" enterkeyhint="enter" autofocus>
+    <input id="task-input" type="text" placeholder="New moment… (Enter to add)" autocomplete="off" enterkeyhint="enter" autofocus>
     <span class="group">
       <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
       <button id="zoom-fit" type="button" title="Zoom to fit the whole graph">Fit</button>
@@ -59,7 +59,7 @@
         <button id="save-as" type="button" role="menuitem">Save as… <kbd>⇧⌘/Ctrl S</kbd></button>
         <button id="share" type="button" role="menuitem">Share link</button>
         <hr>
-        <button id="wait-default" type="button" role="menuitem">Wait between tasks… <span class="menu-value">none</span></button>
+        <button id="wait-default" type="button" role="menuitem">Wait between moments… <span class="menu-value">none</span></button>
         <button id="unit-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Hours and minutes</button>
         <button id="legend-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Show legend</button>
         <button id="critical-toggle" type="button" role="menuitemcheckbox" aria-checked="false"><span class="check">✓</span>Critical path <kbd>!</kbd></button>
@@ -74,17 +74,17 @@
       <button id="help-close" type="button" aria-label="Close help">×</button>
       <h2 id="help-title">How to use the editor</h2>
 
-      <h3>Tasks</h3>
-      <p>Type a task name in the text field and press <kbd>Enter</kbd>. Keep typing to add the next one. The field always keeps focus. A task with both a start and an end date gets a <b>thicker border</b> and is placed after the undated tasks in its column, sorted by date.</p>
-      <p>Press <kbd>/</kbd> (with the text field empty) to split the selected task, or else the newest one, into two tasks in a row. You name the second part. The first part keeps the name, notes and the arcs coming in; the tasks that depended on it now wait for the second part. A dated task is split in the middle, so the pair still ends when it did; a duration without dates is shared between the two.</p>
+      <h3>Moments</h3>
+      <p>Each box is a <b>moment</b>: something that happens at one point in time, like “Entries open” or “Judging”. A moment has a date (or a date and a time of day) but no duration. Type its name in the text field and press <kbd>Enter</kbd>. Keep typing to add the next one. The field always keeps focus. A moment with its date set gets a <b>thicker border</b> and is placed after the undated moments in its column, sorted by date.</p>
+      <p>Press <kbd>/</kbd> (with the text field empty) to add a new moment right after the selected one, or else the newest. You name it. The selected moment keeps the arcs coming in; the moments that came after it now come after the new one.</p>
 
-      <h3>Task properties</h3>
-      <p>Click a box to edit its name, dates and notes (a box with notes shows a small note icon; hover over the name to read them), see and remove its dependencies (including ones that aren’t drawn), or delete it. Set two of start, end and duration and the third is filled in; the <b>×</b> next to one clears it. A missing start or end is suggested (in <i>purple italics</i>) from the connected tasks: the day the tasks it depends on end, and the day the tasks that need it start. Click <b>Use suggested dates</b> to keep them. <b>Auto-schedule…</b> in the ☰ menu does that for every task at once: each task without times starts as soon as the tasks it depends on end (tasks that depend on nothing start on a date you pick) and ends after its duration. Times you have set are never moved, and locked tasks are left alone. Changes are applied as you make them; <b>Save task</b> (or <kbd>Enter</kbd>) confirms and closes the panel. Close with <kbd>Esc</kbd> or by clicking the background.</p>
+      <h3>Moment properties</h3>
+      <p>Click a box to edit its name, date and notes (a box with notes shows a small note icon; hover over the name to read them), see and remove its arcs (including ones that aren’t drawn), or delete it. The <b>×</b> next to the date clears it. A missing date is suggested (in <i>purple italics</i>) from the connected moments: as soon as the moments before it allow, or else as late as the moments after it allow. Click <b>Use suggested date</b> to keep it. <b>Auto-schedule…</b> in the ☰ menu does that for every moment at once: each moment without a date comes as soon as the moments before it allow (moments with nothing before them get a date you pick). Dates you have set are never moved, and locked moments are left alone. Changes are applied as you make them; <b>Save moment</b> (or <kbd>Enter</kbd>) confirms and closes the panel. Close with <kbd>Esc</kbd> or by clicking the background.</p>
 
       <h3>Dependencies</h3>
-      <p>Every box has a connector on each side. Click one: it turns <b>black</b>, and the connectors on the opposite side of the other boxes turn <b class="green">green</b>. Click a green one to draw the arc. Or press <kbd>&lt;</kbd> (with the text field empty) to connect the two newest tasks: type “Shop”, <kbd>Enter</kbd>, “Cook”, <kbd>Enter</kbd>, <kbd>&lt;</kbd> and “Shop” comes before “Cook”. Or drag from a connector and drop the arc anywhere on another box; the box turns green when the arc can go there.</p>
+      <p>Every box has a connector on each side. Click one: it turns <b>black</b>, and the connectors on the opposite side of the other boxes turn <b class="green">green</b>. Click a green one to draw the arc. Or press <kbd>&lt;</kbd> (with the text field empty) to connect the two newest moments: type “Entries open”, <kbd>Enter</kbd>, “Entries close”, <kbd>Enter</kbd>, <kbd>&lt;</kbd> and “Entries open” comes before “Entries close”. Or drag from a connector and drop the arc anywhere on another box; the box turns green when the arc can go there.</p>
       <ul>
-        <li>An arc always runs from a box’s <b>right</b> connector to another box’s <b>left</b> connector, meaning “the left task must finish before the right one”.</li>
+        <li>An arc always runs from a box’s <b>right</b> connector to another box’s <b>left</b> connector, meaning “the left moment comes before the right one”.</li>
         <li>Dimmed connectors can’t be used: that arc would create a cycle or already exists.</li>
         <li>Cancel with <kbd>Esc</kbd>, by clicking empty canvas, or by clicking the black connector again.</li>
         <li>Click an arc to set a <b>wait</b> on it or to remove it.</li>
@@ -92,20 +92,20 @@
       </ul>
 
       <h3>Date conflicts</h3>
-      <p>A task gets a <b class="red">red border</b> when its dates don’t work. Either it starts before a task it depends on has ended (the arc turns red too), or its own end is before its start. Hover over the box to see why. In days, a task may start the day after the tasks it depends on end, not the same day; in hours, at the very minute they end.</p>
-      <p><b>Waits.</b> Some things need time between tasks: paint has to dry, a marinade has to work. Click an arc to give it a wait, e.g. <b>2</b> (days) or <b>4h</b>; the arc shows it as <b>+2d</b> or <b>+4h</b>, and the task after it may only start once the wait is over. <b>Wait between tasks…</b> in the ☰ menu sets a wait for every arc that has none of its own (none by default); a margin of <b>1</b> day, say, or <b>15m</b> to clear up. Conflicts, suggestions, slack, Auto-schedule and Push later all count the waits.</p>
-      <p>When an edit makes later tasks start too early (say a task grows from 1 to 3 days), a message offers <b>Push later</b>: each of those tasks moves later by just enough, keeping its duration, and so do the tasks after it. A task with slack absorbs the delay, so the move stops there. <b>Resolve conflicts</b> in the ☰ menu does the same at any time. A <b>locked</b> task (tick <b>Locked</b> in its properties; the box shows a 🔒) is never moved: if the push reaches it, it stays red, as a sign that something before it has to get shorter. Undo takes a push back.</p>
-      <p>When a task has both a start and an end date, its duration is calculated from them, counting both days (the same start and end is 1 day). It is shown in days and weeks, e.g. <b>5d</b>, <b>3w</b> or <b>3w 1d</b>.</p>
+      <p>A moment gets a <b class="red">red border</b> when its date doesn’t work: it is earlier than a moment that should come before it (the arc turns red too). Hover over the box to see why. Without a wait, a later moment may be on the same day (in hours, at the same minute) as the one before it.</p>
+      <p><b>Waits.</b> Some moments need time between them: results come a week after judging. Click an arc to give it a wait, e.g. <b>7</b> (days) or <b>4h</b>; the arc shows it as <b>+1w</b> or <b>+4h</b>, and the moment after it may only come once the wait is over. <b>Wait between moments…</b> in the ☰ menu sets a wait for every arc that has none of its own (none by default); <b>1</b> day, say, so that each moment is at least the day after the one before. Conflicts, suggestions, slack, Auto-schedule and Push later all count the waits.</p>
+      <p>When an edit makes later moments too early (say a moment moves a few days later), a message offers <b>Push later</b>: each of those moments moves later by just enough, and so do the moments after it. A moment with slack absorbs the delay, so the move stops there. <b>Resolve conflicts</b> in the ☰ menu does the same at any time. A <b>locked</b> moment (tick <b>Locked</b> in its properties; the box shows a 🔒) is never moved: if the push reaches it, it stays red, as a sign that something before it has to be earlier. Undo takes a push back.</p>
 
       <h3>Critical path</h3>
-      <p>Press <kbd>!</kbd> (or use <b>Critical path</b> in the ☰ menu) to show which tasks set the end of the plan. They and the arcs between them turn <b class="orange">orange</b>: any delay there delays what comes after. Every other task gets a small label with its <i>slack</i>, how much later it could end without delaying anything, e.g. <b>+1h 15m</b> or <b>+3d</b>. The properties panel says how late it can end. A task with a <b class="red">−</b> label is behind: something after it would have to move. Missing times count as early as the dependencies allow; a task with neither dates nor a duration is left out. Press <kbd>!</kbd> again to hide it.</p>
+      <p>Press <kbd>!</kbd> (or use <b>Critical path</b> in the ☰ menu) to show which moments set the date of the last moment. They and the arcs between them turn <b class="orange">orange</b>: any delay there delays what comes after. Every other moment gets a small label with its <i>slack</i>, how much later it could be without delaying anything, e.g. <b>+1h 15m</b> or <b>+3d</b>. The properties panel says how late it can be. A moment with a <b class="red">−</b> label is behind: something after it would have to move. A moment without a date counts as early as the moments before it allow; one with no dated moment before it is left out. Press <kbd>!</kbd> again to hide it.</p>
 
-      <h3>Folding</h3>
-      <p>A part of the graph that has one way in and one way out can be folded into a single box. Click its first task, then <kbd>Shift</kbd>-click its last task (or the other way round), and give the group a name. All tasks on the paths between the two are folded, as long as no arc comes in from outside except to the first task and none goes out except from the last. The box looks like a stack of cards. It shows how many tasks it holds and the span from the earliest start to the latest end. It turns <b class="orange">orange</b> or <b class="red">red</b> when a task inside is critical or in conflict. Connect arcs to it as to any box: they go to the first task or from the last. Click the box to unfold it. Folded groups are saved with the graph.</p>
+      <h3>Phases</h3>
+      <p>A part of the graph that has one way in and one way out can be folded into a single box: a <b>phase</b>, like “Judging”, that starts at its first moment and ends at its last. Click the first moment, then <kbd>Shift</kbd>-click the last one (or the other way round), and name the phase. All moments on the paths between the two go into it, as long as no arc comes in from outside except to the first moment and none goes out except from the last. The box looks like a stack of cards. It shows how many moments it holds, and its start and end: the dates of its first and last moment. It turns <b class="orange">orange</b> or <b class="red">red</b> when a moment inside is critical or in conflict. Connect arcs to it as to any box: they go to the first moment or from the last. Click the box to unfold it. Phases are saved with the graph.</p>
 
       <h3>Days or hours</h3>
-      <p>A graph is planned in whole days unless <b>Hours and minutes</b> is ticked in the ☰ menu; the choice is saved with the graph. In hours, start and end have a time of day and a task runs from its start up to its end: 09:00 – 11:00 is 2 hours, and a task may start at the very minute the one before it ends. Durations are written like <b>45m</b>, <b>2h 30m</b>, <b>1d 4h</b> or <b>1.5</b> (hours). When the graph covers more than one date, the boxes show the date under each time.</p>
-      <p>Switching from days to hours keeps everything: a task on Nov 14 becomes Nov 14 00:00 – Nov 15 00:00. Switching back rounds times to whole days, after asking.</p>
+      <p>A graph is planned in whole days unless <b>Hours and minutes</b> is ticked in the ☰ menu; the choice is saved with the graph. In hours, each moment has a time of day too. Waits are written like <b>45m</b>, <b>2h 30m</b>, <b>1d 4h</b> or <b>1.5</b> (hours). When the graph covers more than one date, the boxes show the date under each time.</p>
+      <p>Switching from days to hours keeps everything: a moment on Nov 14 becomes Nov 14 00:00. Switching back drops the times of day, after asking.</p>
+      <p>A graph saved by the task editor opens too: each task becomes a moment at its start date (or its end date when it has no start).</p>
 
       <h3>Moving around</h3>
       <ul>
@@ -132,31 +132,22 @@
 
   <aside id="props" hidden aria-labelledby="props-title">
     <header>
-      <h2 id="props-title">Task properties</h2>
+      <h2 id="props-title">Moment properties</h2>
       <button id="props-close" type="button" aria-label="Close">×</button>
     </header>
 
     <label class="prop">Name
       <input id="p-name" type="text" autocomplete="off">
     </label>
-    <div class="prop-row">
-      <label class="prop" for="p-start"><span class="prop-head">Start <button type="button" class="clear" data-key="start" title="Clear the start" aria-label="Clear the start" hidden>×</button></span>
-        <input id="p-start" type="date">
-      </label>
-      <label class="prop" for="p-end"><span class="prop-head">End <button type="button" class="clear" data-key="end" title="Clear the end" aria-label="Clear the end" hidden>×</button></span>
-        <input id="p-end" type="date">
-      </label>
-    </div>
-    <label class="prop" for="p-duration"><span class="prop-head"><span id="p-duration-label">Duration (days)</span> <button type="button" class="clear" data-key="duration" title="Clear the duration" aria-label="Clear the duration" hidden>×</button></span>
-      <input id="p-duration" type="number" min="1" step="1">
+    <label class="prop" for="p-time"><span class="prop-head"><span id="p-time-label">Date</span> <button type="button" class="clear" data-key="time" title="Clear the date" aria-label="Clear the date" hidden>×</button></span>
+      <input id="p-time" type="date">
     </label>
-    <p id="p-duration-hint" class="hint"></p>
     <p id="p-slack" class="hint slack-line" hidden></p>
-    <label class="prop-check"><input id="p-locked" type="checkbox"> Locked: never moved by Auto-schedule or Resolve conflicts</label>
+    <label class="prop-check"><input id="p-locked" type="checkbox"> Locked: never moved by Resolve conflicts, nor dated by Auto-schedule</label>
 
     <div id="p-suggest" class="suggest" hidden>
       <p id="p-suggest-text"></p>
-      <button id="p-accept" type="button">Use suggested dates</button>
+      <button id="p-accept" type="button">Use suggested date</button>
     </div>
 
     <label class="prop">Notes
@@ -165,16 +156,16 @@
 
     <div id="p-conflicts" class="conflicts" hidden></div>
 
-    <h3>Depends on</h3>
+    <h3>Comes after</h3>
     <ul id="p-before" class="deps"></ul>
-    <h3>Needed by</h3>
+    <h3>Comes before</h3>
     <ul id="p-after" class="deps"></ul>
 
-    <p class="hint fold-hint"><kbd>Shift</kbd>-click another task to fold everything between the two into one box.</p>
+    <p class="hint fold-hint"><kbd>Shift</kbd>-click another moment to make a phase of everything between the two.</p>
 
     <div class="prop-actions">
-      <button id="p-delete" type="button" class="danger">Delete task</button>
-      <button id="p-save" type="button" class="primary">Save task</button>
+      <button id="p-delete" type="button" class="danger">Delete moment</button>
+      <button id="p-save" type="button" class="primary">Save moment</button>
     </div>
   </aside>
 

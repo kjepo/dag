@@ -1,4 +1,6 @@
-/* Task DAG editor — jQuery + Graphviz (viz.js) */
+/* Moment DAG editor — jQuery + Graphviz (viz.js). Each box is a moment: a
+   single date (or date and time), with no duration. The code still calls them
+   tasks internally (tasks, createTask…). */
 $(function () {
   'use strict';
 
@@ -81,7 +83,7 @@ $(function () {
   function focusInput() { if (finePointer) $input.trigger('focus'); }
 
   // ---------------------------------------------------------------- model
-  const tasks = new Map();   // id -> {id, name, start, duration, end, x, y, w, h, o, $el}
+  const tasks = new Map();   // id -> {id, name, time, notes, locked, x, y, w, h, o, $el}
   let edges = [];            // {from, to, el}   (from's right connector -> to's left connector)
   let nextId = 1;
   let pending = null;        // {id, side: 'in'|'out'} — the selected (black) connector
@@ -89,7 +91,7 @@ $(function () {
   // meaning a comes before b (above it; left of it when vertical).
   let orderHints = [];
   const rankOf = new Map();  // id -> rank (column/row) key from the last layout
-  // Folded groups: the tasks from an entry task to an exit task, shown as one box.
+  // Folded groups: the moments from an entry moment to an exit moment, shown as one box.
   // Only the entry has arcs coming in from outside, only the exit has arcs going out.
   // The tasks stay in the model (dates, conflicts, critical path) but are hidden.
   const folds = new Map();   // id ('f1') -> {id, name, entry, exit, members: Set, start, end, x, y, w, h, cy, o, $el}
@@ -163,10 +165,12 @@ $(function () {
     return { year, week };
   }
 
-  // A task's time span in minutes, end exclusive (in day mode the end day counts in full).
+  // A box's time span in minutes, end exclusive (in day mode the day counts in
+  // full): a moment is a single point, a folded group runs from its first to its last moment.
   function taskSpan(t) {
-    let s = parseTime(t.start) ?? parseTime(t.end);
-    let e = parseTime(t.end) ?? parseTime(t.start);
+    const [a, b] = folds.has(t.id) ? [t.start, t.end] : [t.time, t.time];
+    let s = parseTime(a) ?? parseTime(b);
+    let e = parseTime(b) ?? parseTime(a);
     if (s == null) return null;
     if (e < s) [s, e] = [e, s];
     return hourMode ? { s, e } : { s: s * MIN_PER_DAY, e: (e + 1) * MIN_PER_DAY };
@@ -223,7 +227,7 @@ $(function () {
 
     rankIds.forEach(ids => {
       const spans = ids.map(id => taskSpan(nodeObj(id))).filter(Boolean);
-      if (!spans.length) return;                      // no dated task in this column
+      if (!spans.length) return;                      // no dated moment in this column
       const { text, title } = label({ s: Math.min(...spans.map(r => r.s)), e: Math.max(...spans.map(r => r.e)) });
       const $el = $('<div class="legend-label">').text(text).attr('title', title).appendTo($legend);
       legend.ranks.push({ ids, $el });
@@ -276,14 +280,14 @@ $(function () {
   function clockTime(min) { return new Date(min * 60000).toISOString().slice(11, 16); }
   function shortDate(day) { const d = new Date(day * DAY_MS); return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`; }
 
-  // A start or end value in words: "Jul 1" (days), "Jul 1 09:30" (hours).
+  // A time in words: "Jul 1" (days), "Jul 1 09:30" (hours).
   function displayValue(value) {
     const n = parseTime(value);
     if (n == null) return String(value);
     return hourMode ? `${shortDate(Math.floor(n / MIN_PER_DAY))} ${clockTime(n)}` : shortDate(n);
   }
-  // How a start or end shows in a box: the date (days), or the time with the date
-  // underneath when the graph spans more than one date (hours).
+  // How a time shows in a box: the date (days), or the time of day with the
+  // date underneath when the graph spans more than one date (hours).
   function formatTimeField(value) {
     const n = parseTime(value);
     if (n == null) return { short: String(value), long: String(value) };
@@ -292,9 +296,8 @@ $(function () {
     return { short: clockTime(n), sub: showDates ? shortDate(day) : null, long: `${fullDate(day)}, ${clockTime(n)}` };
   }
 
-  // Days: whole days, counted inclusively (same start and end = 1 day), shown
-  // as "5d", "3w", "3w 1d". Hours: minutes, end exclusive, shown as "45m",
-  // "2h 30m", "1d 4h". Spelled out in the tooltip.
+  // Lengths of time (waits, slack). Days: shown as "5d", "3w", "3w 1d". Hours:
+  // minutes, shown as "45m", "2h 30m", "1d 4h". Spelled out in the tooltip.
   function formatDuration(value) {
     const n = parseDuration(value);
     if (n == null) return { short: String(value), long: String(value) };
@@ -310,7 +313,7 @@ $(function () {
     const long = plural(n, 'day') + (w > 0 ? ` (${[w && plural(w, 'week'), d && plural(d, 'day')].filter(Boolean).join(' ')})` : '');
     return { short, long };
   }
-  // Exact duration for the properties field: days as a number, hours as "1d 2h 30m".
+  // Exact length for a wait field: days as a number, hours as "1d 2h 30m".
   function durationInput(n) {
     if (!hourMode) return n;
     const d = Math.floor(n / MIN_PER_DAY), h = Math.floor(n % MIN_PER_DAY / 60), m = n % 60;
@@ -329,12 +332,6 @@ $(function () {
     );
   }
 
-  // With both ends known, the duration follows from them.
-  function derivedDuration(start, end) {
-    const s = parseTime(start), e = parseTime(end);
-    return s != null && e != null && e >= s ? durationValue(e - s + INCL()) : null;
-  }
-
   function addTask(name) {
     const id = 't' + nextId++;
     createTask({ id, name });
@@ -351,10 +348,11 @@ $(function () {
     '<rect x="3" y="7" width="10" height="7.5" rx="1.5" fill="currentColor"/>' +
     '<path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
 
-  // (Re)draw a box's contents and re-measure it (the name may wrap differently).
-  // A task whose start and end are both set.
-  function isDated(t) { return !!(t.start && t.end); }
+  // A moment that has its time set.
+  function isDated(t) { return !!t.time; }
+  function timeLabel() { return hourMode ? 'Time' : 'Date'; }
 
+  // (Re)draw a box's contents and re-measure it (the name may wrap differently).
   function renderTask(t) {
     const hasNotes = !!(t.notes && t.notes.trim());
     t.$el.find('.name').text(t.name)
@@ -362,11 +360,7 @@ $(function () {
       .append(hasNotes ? $('<span class="note-icon" aria-label="Has notes">').html(NOTE_ICON) : null)
       .attr('title', hasNotes ? t.notes : null);
     t.$el.toggleClass('dated', isDated(t));   // thicker border; changes the size, so before measuring
-    t.$el.find('.fields').empty().append(
-      field('Start', t.start, formatTimeField),
-      field('Duration', t.duration, formatDuration),
-      field('End', t.end, formatTimeField)
-    );
+    t.$el.find('.fields').empty().append(field(timeLabel(), t.time, formatTimeField));
     t.w = t.$el.outerWidth();
     t.h = t.$el.outerHeight();
     // Connectors (and arc ends) sit on the divider under the name, whose
@@ -378,9 +372,8 @@ $(function () {
     t.cy = border + dividerY;                              // same point, from the box's outer top
   }
 
-  function createTask({ id, name, start = null, duration = null, end = null, notes = '', locked = false }) {
-    duration = derivedDuration(start, end) ?? duration;
-    const t = { id, name, start, duration, end, notes: typeof notes === 'string' ? notes : '', locked: locked === true, x: 0, y: 0, o: 0 };
+  function createTask({ id, name, time = null, notes = '', locked = false }) {
+    const t = { id, name, time: typeof time === 'string' && time ? time : null, notes: typeof notes === 'string' ? notes : '', locked: locked === true, x: 0, y: 0, o: 0 };
     t.$el = $('<div class="task">').attr('data-id', id).append(
       $('<div class="conn conn-in" title="Click, then pick a green connector to connect">'),
       $('<div class="name">'),
@@ -409,8 +402,8 @@ $(function () {
 
   // Can we add from -> to without duplicating an edge or creating a cycle?
   function edgeProblem(from, to) {
-    if (from === to) return 'A task cannot depend on itself';
-    if (edges.some(e => e.from === from && e.to === to)) return 'Those tasks are already connected';
+    if (from === to) return 'A moment cannot come after itself';
+    if (edges.some(e => e.from === from && e.to === to)) return 'Those moments are already connected';
     if (descendants(to).has(from)) return 'That connection would create a cycle';
     return null;
   }
@@ -545,49 +538,36 @@ $(function () {
   function formatTime(n) { return hourMode ? isoFromMinute(n) : isoFromDay(n); }
   function parseDuration(v) { return hourMode ? parseMinutes(v) : parseDays(v); }
   function durationValue(n) { return hourMode ? `${n}m` : `${n}d`; }
-  // Days count both the first and the last day; times run from start up to end.
-  function INCL() { return hourMode ? 0 : 1; }
-  // How soon a task may start after one it depends on ends: the next day (days),
-  // the same minute (hours).
-  function NEXT() { return hourMode ? 0 : 1; }
-  // Wait between tasks, in the current unit: an arc's own (e.wait, e.g. "2d" or
-  // "240m"), or else the graph's. A task may start at the earliest
-  // end of the task before + NEXT() + wait.
+  // Wait between moments, in the current unit: an arc's own (e.wait, e.g. "2d"
+  // or "240m"), or else the graph's. A moment may come at the earliest at the
+  // moment before it + wait; without a wait, at the same time (or on the same day).
   let graphWait = null;   // "1d", "15m", or null for none
   function waitOf(e) { return (e.wait != null ? parseDuration(e.wait) : null) ?? parseDuration(graphWait) ?? 0; }
-  function minGap(e) { return NEXT() + waitOf(e); }
+  function minGap(e) { return waitOf(e); }
   function waitText(n) { return formatDuration(durationValue(n)).short; }
 
-  // A task is in conflict when its own dates disagree, or when it is connected
-  // to a task whose dates violate the dependency (the later task starts before
-  // the earlier one ends; in days, it must start the day after).
+  // A moment is in conflict when it is connected to a moment whose time
+  // violates the dependency: the later moment comes before the earlier one
+  // (or before the wait between them is over).
   function updateConflicts() {
     const problems = new Map();
     tasks.forEach((t, id) => problems.set(id, []));
 
-    tasks.forEach((t, id) => {
-      const s = parseTime(t.start), e = parseTime(t.end);
-      if (s != null && e != null && e < s) problems.get(id).push('Ends before it starts');
-    });
-
     edges.forEach(edge => {
       const a = tasks.get(edge.from), b = tasks.get(edge.to);
-      const aEnd = parseTime(a.end) ?? parseTime(a.start);
-      const bStart = parseTime(b.start) ?? parseTime(b.end);
-      edge.conflict = aEnd != null && bStart != null && bStart < aEnd + minGap(edge);
+      const aT = parseTime(a.time), bT = parseTime(b.time);
+      edge.conflict = aT != null && bT != null && bT < aT + minGap(edge);
       edge.el.classList.toggle('conflict', edge.conflict);
       edge.el.querySelector('.line').setAttribute('marker-end', edge.conflict ? 'url(#arrow-conflict)' : 'url(#arrow)');
       if (edge.conflict) {
-        const ends = displayValue(a.end || a.start), starts = displayValue(b.start || b.end);
+        const at = displayValue(a.time), bt = displayValue(b.time);
         const w = waitOf(edge);
-        if (w > 0 && bStart >= aEnd + NEXT()) {   // only the wait is missing
-          problems.get(b.id).push(`Starts too soon after “${a.name}” (ends ${ends}, then a ${waitText(w)} wait)`);
-          problems.get(a.id).push(`Ends too late for “${b.name}” (starts ${starts}, after a ${waitText(w)} wait)`);
+        if (w > 0 && bT >= aT) {   // only the wait is missing
+          problems.get(b.id).push(`Too soon after “${a.name}” (${at}, then a ${waitText(w)} wait)`);
+          problems.get(a.id).push(`Too late for “${b.name}” (${bt}, after a ${waitText(w)} wait)`);
         } else {
-          problems.get(b.id).push(hourMode || bStart < aEnd ? `Starts before “${a.name}” ends (${ends})`
-                                                            : `Starts the same day “${a.name}” ends (${ends})`);
-          problems.get(a.id).push(hourMode || bStart < aEnd ? `Ends after “${b.name}” starts (${starts})`
-                                                            : `Ends the same day “${b.name}” starts (${starts})`);
+          problems.get(b.id).push(`Comes before “${a.name}” (${at})`);
+          problems.get(a.id).push(`Comes after “${b.name}” (${bt})`);
         }
       }
     });
@@ -600,7 +580,7 @@ $(function () {
     });
     folds.forEach(f => {
       const bad = [...f.members].filter(id => tasks.get(id).problems.length);
-      f.$el.toggleClass('conflict', bad.length > 0).attr('title', 'A folded group of tasks. Click to unfold it.' +
+      f.$el.toggleClass('conflict', bad.length > 0).attr('title', 'A phase: the moments from its first to its last, folded into one box. Click to unfold it.' +
         (bad.length ? '\n\nDate conflict in ' + bad.map(id => `“${tasks.get(id).name}”`).join(', ') : ''));
     });
   }
@@ -627,24 +607,21 @@ $(function () {
     return order;
   }
 
-  // Slack (total float): how far a task's end can move before it delays a task
-  // that depends on it, or the end of the whole plan. Each task's times are its
-  // own; missing ones are as early as its dependencies allow, plus its duration.
+  // Slack (total float): how much later a moment could be before it pushes a
+  // moment that comes after it, or the last moment of the whole plan. A moment
+  // without a time counts as early as the moments before it allow.
   // Returns { times: id -> {s, e, latestEnd, slack}, latestStart: id -> time }
-  // for the tasks whose times can be worked out.
+  // for the moments whose times can be worked out (s and e are the same time).
   function computeSlack() {
     const order = topoOrder();
     const times = new Map(), latestStart = new Map();
     order.forEach(id => {
-      const t = tasks.get(id), d = parseDuration(t.duration);
-      let s = parseTime(t.start), e = parseTime(t.end);
-      if (s == null && e == null) {
+      let s = parseTime(tasks.get(id).time);
+      if (s == null) {
         const ends = edges.filter(x => x.to === id && times.has(x.from)).map(x => times.get(x.from).e + minGap(x));
         if (ends.length) s = Math.max(...ends);
       }
-      if (e == null && s != null) e = d != null ? s + d - INCL() : s;
-      if (s == null && e != null) s = d != null ? e - d + INCL() : e;
-      if (s != null && e != null) times.set(id, { s, e });
+      if (s != null) times.set(id, { s, e: s });
     });
     if (!times.size) return { times, latestStart };
     const finish = Math.max(...[...times.values()].map(r => r.e));
@@ -657,7 +634,7 @@ $(function () {
         r.slack = lf - r.e;
         latestStart.set(id, lf - (r.e - r.s));
       } else if (lf != null) {
-        latestStart.set(id, lf);   // times unknown: pass the constraint on to the tasks before it
+        latestStart.set(id, lf);   // time unknown: pass the constraint on to the moments before it
       }
     });
     return { times, latestStart };
@@ -667,8 +644,8 @@ $(function () {
     const long = formatDuration(durationValue(Math.abs(r.slack))).long;
     const by = displayValue(formatTime(r.latestEnd));
     if (r.slack === 0) return 'Critical: any delay here delays what comes after it.';
-    if (r.slack > 0) return `Slack: ${long}. It can end as late as ${by} without delaying anything.`;
-    return `Behind by ${long}: it would have to end by ${by} for the later dates to hold.`;
+    if (r.slack > 0) return `Slack: ${long}. It can be as late as ${by} without delaying anything.`;
+    return `Behind by ${long}: it would have to be by ${by} for the later dates to hold.`;
   }
 
   function updateCritical() {
@@ -696,7 +673,7 @@ $(function () {
     });
     edges.forEach(e => {
       const a = times.get(e.from), b = times.get(e.to);
-      // The arc that sets the latest end of a critical task.
+      // The arc that sets the latest time of a critical moment.
       e.critical = !!(a && b && a.slack <= 0 && b.slack <= 0 && latestStart.get(e.to) - minGap(e) === a.latestEnd);
       e.el.classList.toggle('critical', e.critical);
       e.el.querySelector('.line').setAttribute('marker-end',
@@ -740,7 +717,7 @@ $(function () {
   // outside may only leave from the last. Returns {entry, exit, members} or {error}.
   function foldRegion(a, b) {
     const A = tasks.get(a), B = tasks.get(b);
-    if (!A || !B || a === b) return { error: 'Pick two different tasks' };
+    if (!A || !B || a === b) return { error: 'Pick two different moments' };
     let down = descendants(a);
     if (!down.has(b)) {
       if (!descendants(b).has(a)) return { error: `“${A.name}” and “${B.name}” aren’t connected by a path of arcs` };
@@ -753,10 +730,10 @@ $(function () {
     for (const e of edges) {
       const inFrom = members.has(e.from), inTo = members.has(e.to);
       if (inTo && !inFrom && e.to !== a) {
-        return { error: `${name(e.to)} also depends on ${name(e.from)}, outside the group. Only ${name(a)} may have arcs coming in.` };
+        return { error: `${name(e.to)} also depends on ${name(e.from)}, outside the phase. Only ${name(a)} may have arcs coming in.` };
       }
       if (inFrom && !inTo && e.from !== b) {
-        return { error: `${name(e.to)}, outside the group, depends on ${name(e.from)}. Only ${name(b)} may have arcs going out.` };
+        return { error: `${name(e.to)}, outside the phase, depends on ${name(e.from)}. Only ${name(b)} may have arcs going out.` };
       }
     }
     return { entry: a, exit: b, members };
@@ -765,13 +742,13 @@ $(function () {
   function createFold({ id, name, entry, exit, members }) {
     const f = { id, name: name || `${tasks.get(entry).name} … ${tasks.get(exit).name}`, entry, exit, members, x: 0, y: 0, o: 0 };
     f.$el = $('<div class="task fold">').attr('data-id', id)
-      .attr('title', 'A folded group of tasks. Click to unfold it.').append(
-        $('<div class="conn conn-in" title="Click, then pick a green connector to connect (to the first task in the group)">'),
+      .attr('title', 'A phase: the moments from its first to its last, folded into one box. Click to unfold it.').append(
+        $('<div class="conn conn-in" title="Click, then pick a green connector to connect (to the first moment of the phase)">'),
         $('<div class="name">'),
         $('<dl class="fields">'),
-        $('<div class="conn conn-out" title="Click, then pick a green connector to connect (from the last task in the group)">')
+        $('<div class="conn conn-out" title="Click, then pick a green connector to connect (from the last moment of the phase)">')
       ).css({ opacity: 0 }).appendTo($world);
-    // Fade in where the group's first task was.
+    // Fade in where the phase's first moment was.
     const at = tasks.get(entry);
     Object.assign(f, { x: at.x, y: at.y });
     f.$el.css({ left: at.x, top: at.y });
@@ -781,21 +758,20 @@ $(function () {
     return f;
   }
 
-  // Box contents: the name, how many tasks, and the span from the earliest start to the latest end.
+  // A fold of moments is a phase. Box contents: the name, how many moments, and
+  // when it starts and ends (its earliest and latest moment).
   function renderFold(f) {
     const ts = [...f.members].map(id => tasks.get(id));
-    const starts = ts.map(t => parseTime(t.start) ?? parseTime(t.end)).filter(v => v != null);
-    const ends = ts.map(t => parseTime(t.end) ?? parseTime(t.start)).filter(v => v != null);
-    f.start = starts.length ? formatTime(Math.min(...starts)) : null;
-    f.end = ends.length ? formatTime(Math.max(...ends)) : null;
+    const times = ts.map(t => parseTime(t.time)).filter(v => v != null);
+    f.start = times.length ? formatTime(Math.min(...times)) : null;
+    f.end = times.length ? formatTime(Math.max(...times)) : null;
     f.$el.toggleClass('dated', !!(f.start && f.end));
     f.$el.find('.name').empty().append(
       $('<span class="fold-mark" aria-hidden="true">▸</span>'),
       document.createTextNode(f.name),
-      $('<span class="fold-count">').text(`${ts.length} tasks`));
+      $('<span class="fold-count">').text(`Phase · ${ts.length} moments`));
     f.$el.find('.fields').empty().append(
       field('Start', f.start, formatTimeField),
-      field('Duration', derivedDuration(f.start, f.end), formatDuration),
       field('End', f.end, formatTimeField));
     f.w = f.$el.outerWidth();
     f.h = f.$el.outerHeight();
@@ -818,7 +794,7 @@ $(function () {
     });
   }
 
-  // Before every layout: a group whose tasks or arcs changed so that it is no
+  // Before every layout: a group whose moments or arcs changed so that it is no
   // longer closed opens up; the others get their dates refreshed.
   function refreshFolds() {
     folds.forEach(f => {
@@ -837,27 +813,27 @@ $(function () {
     if (pending) cancelPending();
     dropFold(f);
     changed();
-    if (!opts.quiet) showStatus(`Unfolded “${f.name}”`);
+    if (!opts.quiet) showStatus(`Unfolded the phase “${f.name}”`);
   }
 
   async function collapseBetween(a, b) {
     const r = foldRegion(a, b);
     if (r.error) { showStatus(r.error, { error: true }); return; }
-    if ([...r.members].some(id => foldOf.has(id))) { showStatus('Part of that is already folded', { error: true }); return; }
+    if ([...r.members].some(id => foldOf.has(id))) { showStatus('Part of that is already in a phase', { error: true }); return; }
     const first = tasks.get(r.entry).name, last = tasks.get(r.exit).name, n = r.members.size;
     const name = await askText({
-      title: `Fold ${n} tasks into one box?`,
-      text: `Everything from “${first}” to “${last}”. Click the box to unfold it again.`,
-      value: `${first} … ${last}`, confirm: 'Fold',
+      title: `Make a phase of ${n} moments?`,
+      text: `Everything from “${first}” to “${last}” is folded into one box. Name the phase (click the box to unfold it again):`,
+      value: `${first} … ${last}`, confirm: 'Make phase',
     });
     if (name == null) return;
     const again = foldRegion(r.entry, r.exit);   // the graph may have changed while asking
-    if (again.error || [...again.members].some(id => foldOf.has(id))) { showStatus(again.error || 'Part of that is already folded', { error: true }); return; }
+    if (again.error || [...again.members].some(id => foldOf.has(id))) { showStatus(again.error || 'Part of that is already in a phase', { error: true }); return; }
     closeProps();
     if (pending) cancelPending();
     createFold({ id: 'f' + nextFoldId++, name: name.trim(), ...again });
     changed();
-    showStatus(`Folded ${n} tasks into “${name.trim()}”`);
+    showStatus(`Made the phase “${name.trim()}” of ${n} moments`);
   }
 
   // ---------------------------------------------------------------- connecting
@@ -880,8 +856,8 @@ $(function () {
     refreshConnectors();
     const name = nodeObj(nodeOf(id)).name;
     const question = side === 'in'
-      ? `which task must finish before “${name}”?`
-      : `which task must wait for “${name}”?`;
+      ? `which moment comes before “${name}”?`
+      : `which moment comes after “${name}”?`;
     showStatus(`Pick a green connector: ${question} (Esc to cancel)`, { sticky: true });
   }
 
@@ -916,13 +892,12 @@ $(function () {
   // Height of the box padded (above or below) so that its divider is in the middle.
   function layoutHeight(t) { return 2 * Math.max(t.cy, t.h - t.cy); }
 
-  // Order of boxes without arcs: undated tasks first, in the order they were
-  // added, then tasks with both dates, by start, end and name.
+  // Order of boxes without arcs: undated moments first, in the order they were
+  // added, then dated moments, by time and name.
   function looseOrder(list) {
     const undated = list.filter(t => !isDated(t));
     const dated = list.filter(isDated).sort((a, b) =>
-      (parseTime(a.start) ?? 0) - (parseTime(b.start) ?? 0) ||
-      (parseTime(a.end) ?? 0) - (parseTime(b.end) ?? 0) || a.name.localeCompare(b.name));
+      (parseTime(a.time) ?? 0) - (parseTime(b.time) ?? 0) || a.name.localeCompare(b.name));
     return [...undated, ...dated];
   }
 
@@ -1264,17 +1239,18 @@ $(function () {
   }
 
   // ---------------------------------------------------------------- save / load
-  const STORAGE_KEY = 'task-dag-editor:v1';
+  // Separate from the task editor's keys, so the two don't overwrite each other's graph.
+  const STORAGE_KEY = 'moment-dag-editor:v1';
 
   function serialize() {
     return {
-      format: 'task-dag',
+      format: 'moment-dag',
       version: 1,
       layout: vertical ? 'vertical' : 'horizontal',
       timeUnit: hourMode ? 'hour' : 'day',
       ...(graphWait ? { wait: graphWait } : {}),
       tasks: [...tasks.values()].map(t => ({
-        id: t.id, name: t.name, start: t.start, duration: t.duration, end: t.end,
+        id: t.id, name: t.name, time: t.time,
         ...(t.notes ? { notes: t.notes } : {}),
         ...(t.locked ? { locked: true } : {}),
         ...(t.pinned ? { pos: { x: Math.round(t.pinned.x), y: Math.round(t.pinned.y) } } : {}),
@@ -1383,7 +1359,7 @@ $(function () {
   // opts.keepView: undo/redo — keep the view, and slide boxes from opts.prev positions.
   function loadGraph(data, opts = {}) {
     if (!data || !Array.isArray(data.tasks) || !Array.isArray(data.edges)) {
-      throw new Error('Not a task graph file');
+      throw new Error('Not a graph file');
     }
     clearGraph();
     if (data.layout === 'vertical' || data.layout === 'horizontal') setVertical(data.layout === 'vertical');
@@ -1396,7 +1372,8 @@ $(function () {
       if (!t || typeof t.name !== 'string') { skipped++; return; }
       const id = typeof t.id === 'string' && /^t\d+$/.test(t.id) && !tasks.has(t.id) ? t.id : null;
       if (!id) { skipped++; return; }
-      const task = createTask({ id, name: t.name, start: t.start, duration: t.duration, end: t.end, notes: t.notes, locked: t.locked });
+      // Task graphs (start / end) open too: a task becomes the moment it starts (or else ends).
+      const task = createTask({ id, name: t.name, time: t.time ?? t.start ?? t.end, notes: t.notes, locked: t.locked });
       const was = opts.prev && opts.prev.get(id);
       if (was) {   // the same box as before: move it from where it was instead of fading in
         Object.assign(task, { x: was.x, y: was.y, o: 1, fresh: false });
@@ -1436,14 +1413,14 @@ $(function () {
   }
 
   // The name the graph was last opened or saved as; suggested the next time it's saved.
-  const FILE_NAME_KEY = 'task-dag-editor:file-name';
+  const FILE_NAME_KEY = 'moment-dag-editor:file-name';
   let fileName = null;
   try { fileName = localStorage.getItem(FILE_NAME_KEY); } catch (_) { /* storage unavailable */ }
   function setFileName(name) {
     fileName = name || null;
-    document.title = fileName ? `${fileName} — Task DAG Editor` : 'Task DAG Editor';
+    document.title = fileName ? `${fileName} — Moment DAG Editor` : 'Moment DAG Editor';
     const project = fileName ? fileName.replace(/\.json$/i, '') : '';
-    $input.attr('placeholder', project ? `New ${project} task… (Enter to add)` : 'New task… (Enter to add)');
+    $input.attr('placeholder', project ? `New ${project} moment… (Enter to add)` : 'New moment… (Enter to add)');
     try {
       if (fileName) localStorage.setItem(FILE_NAME_KEY, fileName); else localStorage.removeItem(FILE_NAME_KEY);
     } catch (_) { /* storage unavailable */ }
@@ -1451,7 +1428,7 @@ $(function () {
 
   // Chrome and Edge: the file last saved or opened, so Save can write to it again.
   let fileHandle = null;
-  const FILE_TYPES = [{ description: 'Task graph', accept: { 'application/json': ['.json'] } }];
+  const FILE_TYPES = [{ description: 'Moment graph', accept: { 'application/json': ['.json'] } }];
 
   // A name typed by the user as a file name: no path characters, ending in .json.
   function cleanName(name) {
@@ -1472,7 +1449,7 @@ $(function () {
   // browsers ask for a name and download the file.
   async function saveToFile(asNew = false) {
     const text = JSON.stringify(serialize(), null, 2);
-    const saved = () => showStatus(`Saved “${fileName}” (${tasks.size} tasks, ${edges.length} dependencies)`);
+    const saved = () => showStatus(`Saved “${fileName}” (${tasks.size} moments, ${edges.length} arcs)`);
     if (!asNew && fileName) {
       if (fileHandle) {
         try { await writeHandle(fileHandle, text); saved(); return; }
@@ -1483,7 +1460,7 @@ $(function () {
         return;
       }
     }
-    const suggested = fileName || 'task-graph.json';
+    const suggested = fileName || 'moment-graph.json';
     if (window.showSaveFilePicker) {
       let handle;
       try {
@@ -1514,7 +1491,7 @@ $(function () {
   async function downloadAs(text, suggested, done) {
     const answer = await askText({ title: 'Save as', value: suggested, confirm: 'Save', selectName: true });
     if (answer == null) return;                     // cancelled
-    const name = cleanName(answer) || 'task-graph.json';
+    const name = cleanName(answer) || 'moment-graph.json';
     download(text, name);
     fileHandle = null;
     setFileName(name);
@@ -1633,11 +1610,11 @@ $(function () {
     changed();
     if (added.conflict) {
       const a = tasks.get(edge.from), b = tasks.get(edge.to);
-      showStatus(`Date conflict: “${b.name}” starts before “${a.name}” ends`, { error: true });
+      showStatus(`Date conflict: “${b.name}” comes before “${a.name}”`, { error: true });
       return true;
     }
     if (implied) {
-      showStatus(`“${tasks.get(edge.from).name}” already comes before “${tasks.get(edge.to).name}” through other tasks, so this arc is not drawn`);
+      showStatus(`“${tasks.get(edge.from).name}” already comes before “${tasks.get(edge.to).name}” through other moments, so this arc is not drawn`);
       return true;
     }
     return false;
@@ -1672,7 +1649,7 @@ $(function () {
     const def = parseDuration(graphWait) ?? 0;
     const r = await dialog.fire({
       titleText: `${a.name} → ${b.name}`,
-      text: `How long to wait after “${a.name}” ends before “${b.name}” can start. ` +
+      text: `The least time from “${a.name}” to “${b.name}”. ` +
             `Leave it empty to use the graph’s wait (${def ? waitText(def) : 'none'}).`,
       input: 'text', inputValue: edge.wait != null ? String(durationInput(parseDuration(edge.wait) ?? 0)) : '',
       inputPlaceholder: def ? waitText(def) : 'No wait',
@@ -1691,7 +1668,7 @@ $(function () {
     changed();
   }
 
-  // The graph's wait between tasks (menu).
+  // The graph's wait between moments (menu).
   function updateWaitMenu() {
     const n = parseDuration(graphWait) ?? 0;
     $('#wait-default .menu-value').text(n ? waitText(n) : 'none');
@@ -1700,9 +1677,10 @@ $(function () {
     if (!hasSwal) return;
     const n = parseDuration(graphWait) ?? 0;
     const r = await dialog.fire({
-      titleText: 'Wait between tasks',
-      text: 'How long a task waits after the tasks it depends on end, unless its arc has its own wait. ' +
-            (hourMode ? 'E.g. 15m to clear up between steps.' : 'E.g. 1 for a day’s margin.') + ' Empty for none.',
+      titleText: 'Wait between moments',
+      text: 'The least time between a moment and the moments that come after it, unless their arc has its own wait. ' +
+            (hourMode ? 'E.g. 15m.' : 'E.g. 1, so that a later moment is at least the next day.') +
+            ' Empty for none: a later moment may then be at the same time.',
       input: 'text', inputValue: n ? String(durationInput(n)) : '', inputPlaceholder: 'No wait',
       inputAttributes: { autocomplete: 'off' },
       showCancelButton: true, confirmButtonText: 'Save',
@@ -1747,14 +1725,14 @@ $(function () {
     .on('click', () => setShowLegend(!showLegend));
   $('#critical-toggle').attr('aria-checked', String(showCritical))
     .on('click', () => setShowCritical(!showCritical));
-  // "<": an arc from the second newest task to the newest one, so that typing
+  // "<": an arc from the second newest moment to the newest one, so that typing
   // "Shop", Enter, "Cook", Enter, < makes "Shop" come before "Cook".
   function linkNewest() {
     const [b, a] = [...tasks.values()].sort((x, y) => parseInt(y.id.slice(1), 10) - parseInt(x.id.slice(1), 10));
-    if (!a) { showStatus('Add two tasks first'); return; }
+    if (!a) { showStatus('Add two moments first'); return; }
     const problem = edgeProblem(a.id, b.id);
     if (problem) { showStatus(problem, { error: true }); return; }
-    if (foldOf.has(a.id) || foldOf.has(b.id)) { showStatus('One of them is folded; unfold it first', { error: true }); return; }
+    if (foldOf.has(a.id) || foldOf.has(b.id)) { showStatus('One of them is in a phase; unfold it first', { error: true }); return; }
     cancelPending();
     if (!connect(a.id, b.id)) showStatus(`Connected “${a.name}” → “${b.name}”`);
   }
@@ -1766,49 +1744,25 @@ $(function () {
     linkNewest();
   });
 
-  // "/": split the selected task (or else the newest) into two in a row. The
-  // first part keeps the name, notes and incoming arcs; the second takes over
-  // the outgoing arcs. Dated tasks are split in the middle, so the pair still
-  // ends when the task did; an undated duration is shared out.
-  async function splitTask(t) {
+  // "/": a new moment right after the selected one (or else the newest). The
+  // selected moment keeps its incoming arcs; the new one comes after it and
+  // takes over the outgoing arcs, so it slots in between. It has no time yet.
+  async function insertAfter(t) {
     const name = await askText({
-      title: `Split “${t.name}” in two?`,
-      text: 'The second part comes right after it, and the tasks that depended on it now wait for the second part. Name the second part:',
-      value: `${t.name} (2)`, confirm: 'Split', selectName: true,
+      title: `A new moment after “${t.name}”?`,
+      text: 'It comes right after it, and the moments that came after it now come after the new one. Name it:',
+      value: '', confirm: 'Add',
     });
     if (name == null || !tasks.has(t.id) || foldOf.has(t.id)) return;
-    const s = parseTime(t.start), e = parseTime(t.end), d = parseDuration(t.duration), k = INCL();
-    const half = n => hourMode ? Math.round(n / 2) : Math.ceil(n / 2);
-    const b = { start: null, end: null, duration: null };
-    if (s != null && e != null && e >= s) {
-      const total = e - s + k, d1 = half(total);
-      if (total - d1 > 0) {
-        t.end = formatTime(s + d1 - k);
-        b.start = formatTime(s + d1 - k + NEXT());
-        b.end = formatTime(e);
-      } else {   // a single day (or no time at all): the second part comes after it
-        b.start = b.end = formatTime(e + NEXT());
-      }
-    } else {
-      if (d != null) {
-        const d1 = half(d);
-        t.duration = durationValue(d1);
-        if (d - d1 > 0) b.duration = durationValue(d - d1);
-      }
-      if (e != null) { b.end = t.end; t.end = null; }   // the pair still ends then
-    }
-    t.duration = derivedDuration(t.start, t.end) ?? t.duration;
-    renderTask(t);
     const id = 't' + nextId++;
-    createTask({ id, name: name.trim(), ...b, locked: t.locked });
+    createTask({ id, name: name.trim(), locked: t.locked });
     edges.forEach(x => { if (x.from === t.id) x.from = id; });
-    // With a graph-wide wait, the two parts still follow each other directly.
-    addEdge(t.id, id, parseDuration(graphWait) ? durationValue(0) : null);
+    addEdge(t.id, id);
     orderHints = orderHints.filter(h => !h.includes(t.id));
     focusId = id;
     if (pending) cancelPending();
     changed();
-    showStatus(`Split into “${t.name}” and “${name.trim()}”`, { action: { label: 'Undo', run: undo } });
+    showStatus(`Added “${name.trim()}” after “${t.name}”`, { action: { label: 'Undo', run: undo } });
   }
   $(document).on('keydown', e => {
     if (e.key !== '/' || e.metaKey || e.ctrlKey) return;
@@ -1817,9 +1771,9 @@ $(function () {
     e.preventDefault();
     const newest = [...tasks.values()].sort((x, y) => parseInt(y.id.slice(1), 10) - parseInt(x.id.slice(1), 10))[0];
     const t = selectedId ? tasks.get(selectedId) : newest;
-    if (!t) { showStatus('Add a task first'); return; }
-    if (foldOf.has(t.id)) { showStatus('That task is folded; unfold it first', { error: true }); return; }
-    splitTask(t);
+    if (!t) { showStatus('Add a moment first'); return; }
+    if (foldOf.has(t.id)) { showStatus('That moment is in a phase; unfold it first', { error: true }); return; }
+    insertAfter(t);
   });
 
   // "!" toggles the critical path, unless it's being typed into a field.
@@ -1842,11 +1796,9 @@ $(function () {
     hourMode = v;
     $('#unit-toggle').attr('aria-checked', String(v));
     $('#props').toggleClass('hours', v);
-    $('#p-start, #p-end').attr('type', v ? 'datetime-local' : 'date')
+    $('#p-time').attr('type', v ? 'datetime-local' : 'date')
       .attr('step', v ? 60 : null);   // whole minutes: no seconds field
-    $('#p-duration').attr(v ? { type: 'text', inputmode: 'text', placeholder: 'e.g. 2h 30m' }
-                            : { type: 'number', inputmode: null, placeholder: null });
-    $('#p-duration-label').text(v ? 'Duration' : 'Duration (days)');
+    $('#p-time-label').text(v ? 'Date and time' : 'Date');
   }
 
   // In hour mode, boxes show the date under the time when the graph covers more than one date.
@@ -1854,10 +1806,10 @@ $(function () {
     let v = false;
     if (hourMode) {
       const days = new Set();
-      tasks.forEach(t => [t.start, t.end].forEach(x => {
-        const n = parseDateTime(x);
+      tasks.forEach(t => {
+        const n = parseDateTime(t.time);
         if (n != null) days.add(Math.floor(n / MIN_PER_DAY));
-      }));
+      });
       v = days.size > 1;
     }
     if (v === showDates) return;
@@ -1865,31 +1817,18 @@ $(function () {
     tasks.forEach(renderTask);
   }
 
-  // Convert every task's times to the other unit. Days -> hours is exact
-  // (Nov 14 – Nov 14 becomes Nov 14 00:00 – Nov 15 00:00); hours -> days drops
-  // the time of day, so it asks first when there is any.
+  // Convert every moment's time to the other unit. Days -> hours is exact
+  // (Nov 14 becomes Nov 14 00:00); hours -> days drops the time of day, so it
+  // asks first when there is any.
   async function switchTimeUnit(toHours) {
     const conv = [...tasks.values()].map(t => {
       if (toHours) {
-        const s = parseDate(t.start), e = parseDate(t.end), d = parseDays(t.duration);
-        return { t, lossy: false,
-          start: s != null ? isoFromMinute(s * MIN_PER_DAY) : null,
-          end: e != null ? isoFromMinute((e + 1) * MIN_PER_DAY) : null,
-          duration: d != null ? `${d * MIN_PER_DAY}m` : null };
+        const d = parseDate(t.time);
+        return { t, lossy: false, time: d != null ? isoFromMinute(d * MIN_PER_DAY) : null };
       }
-      const s = parseDateTime(t.start), e = parseDateTime(t.end), d = parseMinutes(t.duration);
-      const lossy = [s, e, d].some(n => n != null && n % MIN_PER_DAY !== 0);
-      const sDay = s != null ? Math.floor(s / MIN_PER_DAY) : null;
-      let eDay = null;
-      if (e != null) {
-        // The end is exclusive: a task ending at midnight ends the day before (unless it takes no time).
-        eDay = s != null && e <= s ? Math.floor(e / MIN_PER_DAY) : Math.ceil(e / MIN_PER_DAY) - 1;
-        if (sDay != null) eDay = Math.max(eDay, sDay);
-      }
-      return { t, lossy,
-        start: sDay != null ? isoFromDay(sDay) : null,
-        end: eDay != null ? isoFromDay(eDay) : null,
-        duration: d != null ? `${Math.max(1, Math.ceil(d / MIN_PER_DAY))}d` : null };
+      const m = parseDateTime(t.time);
+      return { t, lossy: m != null && m % MIN_PER_DAY !== 0,
+               time: m != null ? isoFromDay(Math.floor(m / MIN_PER_DAY)) : null };
     });
     // Waits: days -> minutes; minutes -> whole days, rounded up.
     const convWait = w => {
@@ -1907,16 +1846,13 @@ $(function () {
     })) return;
     if (lossy && !await confirmAction({
       title: 'Switch to whole days?', confirm: 'Switch',
-      text: `The times of day of ${lossy} task${lossy === 1 ? '' : 's'} will be rounded to whole days.`,
+      text: `The times of day of ${lossy} moment${lossy === 1 ? '' : 's'} will be dropped.`,
     })) return;
     setHourMode(toHours);
     waits.forEach(([e, c]) => { e.wait = c.w; });
     graphWait = gw.w;
     updateWaitMenu();
-    conv.forEach(({ t, start, end, duration }) => {
-      t.start = start; t.end = end;
-      t.duration = derivedDuration(start, end) ?? duration;
-    });
+    conv.forEach(({ t, time }) => { t.time = time; });
     updateShowDates();
     tasks.forEach(renderTask);   // every box shows its times in the new unit
     changed();
@@ -2000,7 +1936,7 @@ $(function () {
 
   function depItem(task, edge) {
     return $('<li>').append(
-      $('<button type="button" class="dep-name">').text(task.name).attr('title', 'Show this task')
+      $('<button type="button" class="dep-name">').text(task.name).attr('title', 'Show this moment')
         .on('click', () => openProps(task.id)),
       waitOf(edge) > 0 ? $('<span class="dep-note">').text(`wait ${waitText(waitOf(edge))}`) : null,
       edge.hidden ? $('<span class="dep-note">').text('implied, not drawn') : null,
@@ -2019,38 +1955,17 @@ $(function () {
     set('#p-name', t.name);
     set('#p-notes', t.notes || '');
 
-    // Missing dates are pre-filled with suggestions from neighbouring tasks.
+    // A missing time is pre-filled with a suggestion from neighbouring moments.
     const sug = suggestTiming(t);
-    const startVal = isoOrEmpty(t.start) || sug.start || '';
-    const endVal = isoOrEmpty(t.end) || sug.end || '';
-    const sDay = parseTime(startVal), eDay = parseTime(endVal);
-    const ownDays = parseDuration(t.duration);
-    const sugDays = ownDays == null && sug.any && sDay != null && eDay != null && eDay >= sDay ? eDay - sDay + INCL() : null;
-    set('#p-start', startVal);
-    set('#p-end', endVal);
-    set('#p-duration', ownDays ?? sugDays ?? '');
-    if ($('#p-duration')[0] !== active && hourMode && (ownDays ?? sugDays) != null) $('#p-duration').val(durationInput(ownDays ?? sugDays));
-    $('#p-start').toggleClass('suggested', !!sug.start);
-    $('#p-end').toggleClass('suggested', !!sug.end);
-    $('#p-duration').toggleClass('suggested', sugDays != null);
+    set('#p-time', isoOrEmpty(t.time) || sug.time || '');
+    $('#p-time').toggleClass('suggested', !!sug.time);
     $('#p-suggest').prop('hidden', !sug.any);
     $('#p-suggest-text').text(sug.reason);
-
-    const both = parseTime(t.start) != null && parseTime(t.end) != null;
-    const d = ownDays ?? sugDays;
-    $('#p-duration-hint').text(
-      (d != null ? formatDuration(durationValue(d)).long + '. ' : '') +
-      (both ? `Calculated from the ${hourMode ? 'times' : 'dates'}; changing it moves the end.`
-            : 'Set two of start, end and duration and the third is filled in.'));
     $('#p-locked').prop('checked', !!t.locked);
     $('#p-slack').prop('hidden', !t.slack).text(t.slack ? slackText(t.slack) : '')
       .toggleClass('critical', !!t.slack && t.slack.slack <= 0);
-
-    // × buttons: only for values the task really has (not suggestions). The duration
-    // follows from the dates when both are set, so clear one of those instead.
-    $props.find('.clear[data-key="start"]').prop('hidden', !t.start);
-    $props.find('.clear[data-key="end"]').prop('hidden', !t.end);
-    $props.find('.clear[data-key="duration"]').prop('hidden', !t.duration || both);
+    // ×: only for a time the moment really has (not a suggestion).
+    $props.find('.clear[data-key="time"]').prop('hidden', !t.time);
 
     const problems = t.problems || [];
     $('#p-conflicts').prop('hidden', !problems.length).empty().append(
@@ -2065,90 +1980,62 @@ $(function () {
                                               : $('<li class="none">').text('Nothing'));
   }
 
-  // Suggested dates for a task that lacks a start and/or end:
-  //  - start: after the latest end among the tasks it depends on (the next day, in days);
-  //  - end:   start + duration, or else the earliest start
-  //           among the tasks that depend on it;
-  //  - start from end - duration when nothing comes before it.
+  // Suggested time for a moment without one: as early as the moments before it
+  // allow (the latest of them, plus any wait), or else as late as the moments
+  // after it allow.
   function suggestTiming(t) {
-    // The earliest start each dependency allows, and the latest end each task after it allows.
-    const predEnds = edges.filter(x => x.to === t.id).map(x => {
-      const p = tasks.get(x.from), v = parseTime(p.end) ?? parseTime(p.start);
+    if (parseTime(t.time) != null) return { time: null, any: false, reason: '' };
+    const after = edges.filter(x => x.to === t.id).map(x => {
+      const v = parseTime(tasks.get(x.from).time);
       return v != null ? v + minGap(x) : null;
     }).filter(v => v != null);
-    const succStarts = edges.filter(x => x.from === t.id).map(x => {
-      const n = tasks.get(x.to), v = parseTime(n.start) ?? parseTime(n.end);
+    const before = edges.filter(x => x.from === t.id).map(x => {
+      const v = parseTime(tasks.get(x.to).time);
       return v != null ? v - minGap(x) : null;
     }).filter(v => v != null);
-    const d = parseDuration(t.duration);
-    const s = parseTime(t.start), e = parseTime(t.end);
-    const when = hourMode ? 'when' : 'the day';
-    let sugS = null, sugE = null;
-    const why = [];
-
-    if (s == null && predEnds.length) {
-      sugS = Math.max(...predEnds);
-      why.push(hourMode ? 'start: when the tasks it depends on end' : 'start: the day after the tasks it depends on end');
-    }
-    if (e == null) {
-      const S = s ?? sugS;
-      if (S != null && d != null) { sugE = S + d - INCL(); why.push('end: start + duration'); }
-      else if (succStarts.length) { sugE = Math.min(...succStarts); why.push(hourMode ? 'end: when the tasks that need it start' : 'end: the day before the tasks that need it start'); }
-    }
-    if (s == null && sugS == null && d != null) {
-      const E = e ?? sugE;
-      if (E != null) { sugS = E - d + INCL(); why.push('start: end − duration'); }
-    }
-    return {
-      start: sugS != null ? formatTime(sugS) : null,
-      end: sugE != null ? formatTime(sugE) : null,
-      any: sugS != null || sugE != null,
-      reason: why.length ? 'Suggested ' + why.join('; ') + '.' : '',
-    };
+    let time = null, reason = '';
+    if (after.length) { time = Math.max(...after); reason = 'Suggested: as soon as the moments before it allow.'; }
+    else if (before.length) { time = Math.min(...before); reason = 'Suggested: as late as the moments after it allow.'; }
+    return { time: time != null ? formatTime(time) : null, any: time != null, reason };
   }
 
   function acceptSuggestion() {
     const t = tasks.get(selectedId);
     if (!t) return;
     const sug = suggestTiming(t);
-    if (sug.start) t.start = sug.start;
-    if (sug.end) t.end = sug.end;
-    t.duration = derivedDuration(t.start, t.end) ?? t.duration;
+    if (sug.time) t.time = sug.time;
     renderTask(t);
     changed();
   }
 
   // ---------------------------------------------------------------- resolve conflicts
-  // Move tasks that start too early (before a task they depend on ends, or in
-  // days on that same day) later by just enough, keeping their duration; the
-  // move carries on to the tasks after them. Locked tasks never move: they stay
-  // in conflict and are reported. Own-date problems (end before start) are left.
-  // Returns { moves: id -> {start, end}, shift: id -> amount, blocked: [ids] }.
+  // Move moments that come too early (before a moment they come after, plus
+  // any wait) later by just enough; the move carries on to the moments after
+  // them. Locked moments never move: they stay in conflict and are reported.
+  // Returns { moves: id -> {time}, shift: id -> amount, blocked: [ids] }.
   function planPush() {
-    const cur = new Map([...tasks].map(([id, t]) => [id, { s: parseTime(t.start), e: parseTime(t.end) }]));
+    const cur = new Map([...tasks].map(([id, t]) => [id, parseTime(t.time)]));
     const moves = new Map(), shift = new Map(), blocked = [];
     topoOrder().forEach(id => {
-      const t = tasks.get(id), c = cur.get(id);
-      const at = c.s ?? c.e;                           // where it starts, as conflicts see it
+      const t = tasks.get(id), at = cur.get(id);
       if (at == null) return;
       const ends = edges.filter(x => x.to === id).map(x => {
-        const p = cur.get(x.from), v = p.e ?? p.s;
+        const v = cur.get(x.from);
         return v != null ? v + minGap(x) : null;
       }).filter(v => v != null);
       if (!ends.length) return;
       const need = Math.max(...ends) - at;
       if (need <= 0) return;
       if (t.locked) { blocked.push(id); return; }
-      if (c.s != null) c.s += need;
-      if (c.e != null) c.e += need;
+      cur.set(id, at + need);
       shift.set(id, need);
-      moves.set(id, { start: c.s != null ? formatTime(c.s) : t.start, end: c.e != null ? formatTime(c.e) : t.end });
+      moves.set(id, { time: formatTime(at + need) });
     });
     return { moves, shift, blocked };
   }
 
   function planEnd() {
-    const ends = [...tasks.values()].map(t => parseTime(t.end) ?? parseTime(t.start)).filter(v => v != null);
+    const ends = [...tasks.values()].map(t => parseTime(t.time)).filter(v => v != null);
     return ends.length ? Math.max(...ends) : null;
   }
 
@@ -2158,28 +2045,27 @@ $(function () {
     if (!plan.moves.size) {
       showStatus(plan.blocked.length
         ? `Nothing can move: ${names(plan.blocked)} ${plan.blocked.length === 1 ? 'is' : 'are'} locked`
-        : 'No conflicts that moving tasks later would fix');
+        : 'No conflicts that moving moments later would fix');
       return;
     }
     const before = planEnd();
     plan.moves.forEach((m, id) => {
       const t = tasks.get(id);
-      t.start = m.start; t.end = m.end;
-      t.duration = derivedDuration(t.start, t.end) ?? t.duration;
+      t.time = m.time;
       renderTask(t);
     });
     changed();
     const after = planEnd(), n = plan.moves.size;
-    let msg = `Moved ${n} task${n === 1 ? '' : 's'} later`;
+    let msg = `Moved ${n} moment${n === 1 ? '' : 's'} later`;
     if (after != null && before != null && after > before) {
-      msg += `; the plan now ends ${displayValue(formatTime(after))}, ${formatDuration(durationValue(after - before)).long} later`;
+      msg += `; the last moment is now ${displayValue(formatTime(after))}, ${formatDuration(durationValue(after - before)).long} later`;
     }
     if (plan.blocked.length) msg += `. Still in conflict (locked): ${names(plan.blocked)}`;
     showStatus(msg, { action: { label: 'Undo', run: undo } });
   }
   $('#resolve').on('click', pushLater);
 
-  // After an edit that creates new conflicts, offer to push the later tasks.
+  // After an edit that creates new conflicts, offer to push the later moments.
   let conflictKeys = new Set();
   function checkNewConflicts(offer) {
     const now = new Set(edges.filter(e => e.conflict).map(e => e.from + '>' + e.to));
@@ -2189,42 +2075,34 @@ $(function () {
     const plan = planPush();
     if (!plan.moves.size) return;
     const n = plan.moves.size;
-    showStatus(`${n} later task${n === 1 ? '' : 's'} now start${n === 1 ? 's' : ''} too early.`,
+    showStatus(`${n} later moment${n === 1 ? ' is' : 's are'} now too early.`,
       { action: { label: 'Push later', run: pushLater } });
   }
 
   // ---------------------------------------------------------------- auto-schedule
-  // Fill in every missing start and end, as early as the dependencies allow: a
-  // task starts when the last task it depends on ends (or at `from` when it
-  // depends on nothing), and ends after its duration. Times already set are kept,
-  // even when they conflict. Returns the changes (id -> {start?, end?}) and how
-  // many tasks couldn't be placed (they need `from`).
+  // Fill in every missing time, as early as the dependencies allow: a moment
+  // comes at the latest of the moments before it, plus any wait (or at `from`
+  // when nothing comes before it). Times already set are kept, even when they
+  // conflict. Returns the changes (id -> {time}) and how many moments couldn't
+  // be placed (they need `from`).
   function planSchedule(from) {
-    const changes = new Map(), endOf = new Map();
-    let unplaced = 0, noDuration = 0;
+    const changes = new Map(), timeOf = new Map();
+    let unplaced = 0;
     topoOrder().forEach(id => {
-      const t = tasks.get(id), d = parseDuration(t.duration);
-      let s = parseTime(t.start), e = parseTime(t.end);
-      if (s == null && e != null && d != null) s = e - d + INCL();
-      if (t.locked) { if (s != null || e != null) endOf.set(id, e ?? s); else unplaced++; return; }   // never changed
-      if (s == null && e == null) {
-        const ends = edges.filter(x => x.to === id).map(x => endOf.has(x.from) ? endOf.get(x.from) + minGap(x) : null);
+      const t = tasks.get(id);
+      let s = parseTime(t.time);
+      if (t.locked) { if (s != null) timeOf.set(id, s); else unplaced++; return; }   // never changed
+      if (s == null) {
+        const ends = edges.filter(x => x.to === id).map(x => timeOf.has(x.from) ? timeOf.get(x.from) + minGap(x) : null);
         if (ends.some(v => v == null)) s = null;           // something before it couldn't be placed
         else if (ends.length) s = Math.max(...ends);
         else s = from;
+        if (s != null) changes.set(id, { time: formatTime(s) });
       }
-      if (s != null && e == null && d != null) e = s + d - INCL();
-      const c = {};
-      if (s != null && !t.start) c.start = formatTime(s);
-      if (e != null && !t.end) c.end = formatTime(e);
-      if (c.start || c.end) {
-        changes.set(id, c);
-        if (e == null) noDuration++;                        // only a start: no duration to end it
-      }
-      if (s == null && e == null) unplaced++;
-      else endOf.set(id, e ?? s);
+      if (s == null) unplaced++;
+      else timeOf.set(id, s);
     });
-    return { changes, unplaced, noDuration };
+    return { changes, unplaced };
   }
 
   function today() {
@@ -2234,71 +2112,58 @@ $(function () {
   }
 
   async function autoSchedule() {
-    if (!tasks.size) { showStatus('Add some tasks first'); return; }
+    if (!tasks.size) { showStatus('Add some moments first'); return; }
     let plan = planSchedule(null);
     if (plan.unplaced) {
-      // Some tasks depend on nothing dated: ask where the plan starts.
-      const known = [...tasks.values()].map(t => parseTime(t.start)).filter(v => v != null);
+      // Some moments come after nothing dated: ask where the plan starts.
+      const known = [...tasks.values()].map(t => parseTime(t.time)).filter(v => v != null);
       const answer = await askDate({
         title: 'Auto-schedule', confirm: 'Schedule',
         value: formatTime(known.length ? Math.min(...known) : today()),
-        text: 'Tasks without times are placed as early as their dependencies allow, starting from this ' +
+        text: 'Moments without a time are placed as early as the moments before them allow, starting from this ' +
               (hourMode ? 'time' : 'date') + '. Times you have set are kept.',
       });
       if (answer == null) return;
       plan = planSchedule(parseTime(answer));
     }
-    if (!plan.changes.size) { showStatus('Nothing to schedule: every task already has its times'); return; }
+    if (!plan.changes.size) { showStatus('Nothing to schedule: every moment already has its time'); return; }
     plan.changes.forEach((c, id) => {
       const t = tasks.get(id);
       Object.assign(t, c);
-      t.duration = derivedDuration(t.start, t.end) ?? t.duration;
       renderTask(t);
     });
     changed();
     const n = plan.changes.size;
-    showStatus(`Scheduled ${n} task${n === 1 ? '' : 's'}` +
-      (plan.noDuration ? ` (${plan.noDuration} without a duration got only a start)` : '') + '. Undo takes it back.');
+    showStatus(`Scheduled ${n} moment${n === 1 ? '' : 's'}. Undo takes it back.`);
   }
   $('#auto-schedule').on('click', autoSchedule);
 
-  // Apply an edit to start / end / duration, filling in the third value when possible.
-  function setTiming(t, key, value) {
-    // Stored in one form: "2026-11-15" (days), "2026-11-15T09:30" (hours, no seconds).
-    const n = key === 'duration' ? null : parseTime(value);
-    t[key] = value === '' ? null : n != null ? formatTime(n) : value;
-    const s = parseTime(t.start), e = parseTime(t.end), d = parseDuration(t.duration), k = INCL();
-    if (key === 'start' && s != null && e == null && d != null) t.end = formatTime(s + d - k);
-    if (key === 'end' && e != null && s == null && d != null) t.start = formatTime(e - d + k);
-    if (key === 'duration' && d != null) {
-      if (s != null) t.end = formatTime(s + d - k);
-      else if (e != null) t.start = formatTime(e - d + k);
-    }
-    t.duration = derivedDuration(t.start, t.end) ?? t.duration;
+  // Set a moment's time. Stored in one form: "2026-11-15" (days),
+  // "2026-11-15T09:30" (hours, no seconds).
+  function setTiming(t, value) {
+    const n = parseTime(value);
+    t.time = value === '' ? null : n != null ? formatTime(n) : value;
     renderTask(t);
     changed();
   }
 
-  // Remove a start, end or duration. Clearing a date also drops a duration that
-  // was only there because both dates were set, so no suggestion pops straight back.
-  function clearTiming(key) {
+  function clearTiming() {
     const t = tasks.get(selectedId);
     if (!t) return;
-    if ((key === 'start' || key === 'end') && t.start && t.end) t.duration = null;
-    t[key] = null;
+    t.time = null;
     renderTask(t);
     changed();
   }
   $props.on('click', '.clear', function (e) {
     e.preventDefault();   // don't let the label move focus to its field
-    clearTiming($(this).attr('data-key'));
+    clearTiming();
   });
 
   async function deleteTask(id) {
     const t = tasks.get(id);
     if (!await confirmAction({
       title: `Delete “${t.name}”?`, confirm: 'Delete', danger: true,
-      text: (hasEdges(id) ? 'Its dependencies are removed too. ' : '') + 'Undo brings it back.',
+      text: (hasEdges(id) ? 'Its arcs are removed too. ' : '') + 'Undo brings it back.',
     })) return;
     if (!tasks.has(id)) return;
     closeProps();
@@ -2316,7 +2181,7 @@ $(function () {
     if (suppressClick || $(e.target).closest('.conn').length) return;
     const id = $(this).attr('data-id');
     if (folds.has(id)) { expandFold(id); return; }
-    // Shift-click a second task: fold up everything from the selected one to it.
+    // Shift-click a second moment: fold up everything from the selected one to it.
     if (e.shiftKey && selectedId && selectedId !== id) { collapseBetween(selectedId, id); return; }
     openProps(id);
   });
@@ -2342,10 +2207,10 @@ $(function () {
     renderTask(t);   // the box shows a notes icon when there are notes
     changed({ coalesce: 'notes:' + t.id });
   });
-  // Start and end. Chrome reports every keystroke in a date field as a change
+  // The time. Chrome reports every keystroke in a date field as a change
   // (typing a year passes through 0002, 0020, 0202…), so while the field has
   // focus the value is applied after a pause; leaving the field, Enter, Save,
-  // closing the panel or picking another task apply it at once.
+  // closing the panel or picking another moment apply it at once.
   const dateEdits = new Map();   // input id -> {timer, id: task id}
   function commitDate(el) {
     const pend = dateEdits.get(el.id);
@@ -2353,31 +2218,17 @@ $(function () {
     clearTimeout(pend.timer);
     dateEdits.delete(el.id);
     const t = tasks.get(pend.id);
-    const key = el.id === 'p-start' ? 'start' : 'end';
-    if (!t || el.value === isoOrEmpty(t[key])) return;   // gone, or unchanged
-    setTiming(t, key, el.value);
+    if (!t || el.value === isoOrEmpty(t.time)) return;   // gone, or unchanged
+    setTiming(t, el.value);
   }
-  function flushDates() { ['p-start', 'p-end'].forEach(id => commitDate(document.getElementById(id))); }
-  $('#p-start, #p-end').on('change', function () {
+  function flushDates() { commitDate(document.getElementById('p-time')); }
+  $('#p-time').on('change', function () {
     if (!selectedId) return;
     const pend = dateEdits.get(this.id);
     if (pend) clearTimeout(pend.timer);
     dateEdits.set(this.id, { id: selectedId, timer: setTimeout(() => commitDate(this), 800) });
     if (document.activeElement !== this) commitDate(this);
   }).on('blur', function () { commitDate(this); });
-  $('#p-duration').on('change', function () {
-    const t = tasks.get(selectedId);
-    if (!t) return;
-    if (this.value.trim() === '') { setTiming(t, 'duration', ''); return; }
-    if (hourMode) {
-      const n = parseMinutes(this.value);
-      if (n == null) { showStatus('Write a duration like 2h 30m, 45m, 1d 4h or 1.5', { error: true }); fillProps(); return; }
-      setTiming(t, 'duration', durationValue(n));
-    } else {
-      const n = Math.round(+this.value);
-      setTiming(t, 'duration', n >= 1 ? durationValue(n) : '');
-    }
-  });
   $props.on('keydown', 'input', e => {
     if (e.key === 'Enter') { $(e.target).trigger('change'); closeProps(); }
   });
@@ -2533,7 +2384,7 @@ $(function () {
         if (Math.hypot(e.clientX - connDrag.mx, e.clientY - connDrag.my) < 4) return;
         connDrag.moved = true;
         startPending(connDrag.id, connDrag.side);
-        showStatus('Drop the arc on another task (Esc to cancel)', { sticky: true });
+        showStatus('Drop the arc on another moment (Esc to cancel)', { sticky: true });
         const g = document.createElementNS(SVGNS, 'g');
         g.setAttribute('class', 'edge drag-edge');
         const line = document.createElementNS(SVGNS, 'path');
@@ -2687,7 +2538,7 @@ $(function () {
   }
 
   async function shareLink() {
-    if (!tasks.size) { showStatus('Add some tasks first'); return; }
+    if (!tasks.size) { showStatus('Add some moments first'); return; }
     let url;
     try {
       url = location.origin + location.pathname + location.search + '#g=' + await encodeGraph(serialize());
@@ -2717,8 +2568,8 @@ $(function () {
       return;
     }
     if (tasks.size && !await confirmAction({
-      title: `Open the shared graph (${(data.tasks || []).length} tasks)?`, confirm: 'Open',
-      text: `It replaces the graph you have here (${tasks.size} tasks). Save that one first if you want to keep it.`,
+      title: `Open the shared graph (${(data.tasks || []).length} moments)?`, confirm: 'Open',
+      text: `It replaces the graph you have here (${tasks.size} moments). Save that one first if you want to keep it.`,
     })) return;
     try {
       const skipped = loadGraph(data);
