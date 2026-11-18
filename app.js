@@ -2067,9 +2067,9 @@ $(function () {
   // takes over the outgoing arcs, so it slots in between. It has no time yet.
   async function insertAfter(t) {
     const name = await askText({
-      title: `A new moment after “${t.name}”?`,
-      text: 'It comes right after it, and the moments that came after it now come after the new one. Name it:',
-      value: '', confirm: 'Add',
+      title: `Split “${t.name}”?`,
+      text: 'A new moment comes right after it, and the moments that came after it now come after the new one. Name the new moment:',
+      value: '', confirm: 'Split',
     });
     if (name == null || !tasks.has(t.id) || foldOf.has(t.id)) return;
     const id = 't' + nextId++;
@@ -2080,19 +2080,27 @@ $(function () {
     focusId = id;
     if (pending) cancelPending();
     changed();
-    showStatus(`Added “${name.trim()}” after “${t.name}”`, { action: { label: 'Undo', run: undo } });
+    showStatus(`Split “${t.name}”: “${name.trim()}” comes right after it`, { action: { label: 'Undo', run: undo } });
   }
   $(document).on('keydown', e => {
     if (e.key !== '/' || e.metaKey || e.ctrlKey) return;
     const el = e.target;
     if ($(el).is('input, textarea') && !(el === $input[0] && el.value === '')) return;
     e.preventDefault();
+    insertAfterSelected();
+  });
+  // Split, also in the ☰ menu: after the selected (or the one picked) moment, or else the newest.
+  function insertAfterSelected() {
     const newest = [...tasks.values()].sort((x, y) => parseInt(y.id.slice(1), 10) - parseInt(x.id.slice(1), 10))[0];
-    const t = selectedId ? tasks.get(selectedId) : newest;
+    const one = picked.size === 1 ? [...picked][0] : null;
+    const t = selectedId ? tasks.get(selectedId) : one ? tasks.get(one) : newest;
+    if (one && !t) { showStatus('Pick a moment, not a phase', { error: true }); return; }
     if (!t) { showStatus('Add a moment first'); return; }
     if (foldOf.has(t.id)) { showStatus('That moment is in a phase; unfold it first', { error: true }); return; }
+    if (one) clearPicks();
     insertAfter(t);
-  });
+  }
+  $('#insert-after').on('click', insertAfterSelected);
 
   // Delete or Backspace deletes the picked boxes, or the moment in the
   // properties panel, unless something is being typed.
