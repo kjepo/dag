@@ -114,7 +114,7 @@
       <p><b>Timeline</b> in the ☰ menu lists the graph in date order, as it is shown: each moment with its name and notes, and each phase with its name and its first to last date. A folded phase is one line; an open phase has its line, and its moments follow. Moments without a date are listed at the end. Click a moment to open it. Close with <b>×</b>, <kbd>Esc</kbd>, or a click outside.</p>
       <h3>Phases</h3>
       <p>Any moments can be grouped into a <b>phase</b>, like “Judging”, shown as a single box. Pick the boxes: <kbd>Shift</kbd>-click them (or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>-click) with a mouse, or on a touch screen <b>press and hold</b> one box, then tap the others. Picked boxes get a blue outline; click or tap one again to unpick it. A bar at the bottom shows how many are picked: <b>Group to phase</b> makes the phase and lets you type its name right in the box, <b>Cancel</b> (or <kbd>Esc</kbd>, or a click on the background) unpicks them all. A moment that lies on a path between two picked moments goes into the phase too, so a phase never has arcs going out and coming back in; the same happens when a later arc puts a moment between two of its moments. The box looks like a stack of cards. A badge on top says how many moments it holds; the box shows its start and end: the earliest and latest date inside. It turns <b class="orange">orange</b> or <b class="red">red</b> when a moment inside is critical or in conflict. Connect arcs to it as to any box: an arc to it goes to each of its first moments, an arc from it leaves from each of its last ones, so the whole phase comes after (or before) the other moment.</p>
-      <p>Click a phase’s box to <b>open</b> it: its moments come out and stay together inside a dashed frame with the phase’s name on top, so you can see which moments belong to it and edit them. Click <b>▾</b> before the name to fold them back into one box. <b>Double-click</b> the name, on the frame or on the folded box, to rename the phase right there, as with a moment’s name: type, then <kbd>Enter</kbd> (or click elsewhere) to keep it, or <kbd>Esc</kbd> to cancel. The <b>×</b> after the name removes the phase and keeps its moments. To add a moment to an open phase, <b>drag</b> it onto the frame (pull it sideways first if it has arcs; the frame turns green), and drop it. Drag a moment out of its frame and drop it outside to take it out of the phase. A folded phase’s box can be dragged the same way, taking all its moments along, and slid up or down (left or right, when vertical) to reorder it among the boxes next to it. A moment that lies between two others of the phase has to stay in it. Phases, open or folded, are saved with the graph.</p>
+      <p>Click a phase’s box to <b>open</b> it: its moments come out and stay together inside a dashed frame with the phase’s name on top, so you can see which moments belong to it and edit them. Click <b>▾</b> before the name to fold them back into one box. <b>Double-click</b> the name, on the frame or on the folded box, to rename the phase right there, as with a moment’s name: type, then <kbd>Enter</kbd> (or click elsewhere) to keep it, or <kbd>Esc</kbd> to cancel. The <b>×</b> after the name removes the phase and keeps its moments. The <b>✎</b> after the name, on the frame or in the folded box, opens the phase’s properties: its name and <b>notes</b>. A phase with notes shows the note icon (hover over the name to read them), and the timeline shows its notes. To add a moment to an open phase, <b>drag</b> it onto the frame (pull it sideways first if it has arcs; the frame turns green), and drop it. Drag a moment out of its frame and drop it outside to take it out of the phase. A folded phase’s box can be dragged the same way, taking all its moments along, and slid up or down (left or right, when vertical) to reorder it among the boxes next to it. A moment that lies between two others of the phase has to stay in it. Phases, open or folded, are saved with the graph.</p>
       <p>Phases can be <b>inside other phases</b>. Open a phase and make a phase of some of its moments, or make a bigger phase around a phase by picking its folded box along with other boxes. A phase must hold all of another phase or none of it. Folding a phase hides everything inside it; opening it shows the phases inside as you left them, folded or open, each in its own frame.</p>
 
       <h3>Days or hours</h3>
@@ -190,6 +190,24 @@
       <button id="p-delete" type="button" class="danger">Delete moment</button>
       <button id="p-split" type="button" class="secondary" title="A new moment right after this one (/)">Split…</button>
       <button id="p-save" type="button" class="primary">Save moment</button>
+    </div>
+  </aside>
+
+  <aside id="phase-props" hidden aria-labelledby="phase-props-title">
+    <header>
+      <h2 id="phase-props-title">Phase properties</h2>
+      <button id="phase-props-close" type="button" class="props-close" aria-label="Close">×</button>
+    </header>
+    <label class="prop">Name
+      <input id="pp-name" type="text" autocomplete="off">
+    </label>
+    <p id="pp-info" class="hint"></p>
+    <label class="prop">Notes
+      <textarea id="pp-notes" rows="4" placeholder="What this phase is about…"></textarea>
+    </label>
+    <div class="prop-actions">
+      <button id="pp-remove" type="button" class="danger" title="The moments stay">Remove phase</button>
+      <button id="pp-done" type="button" class="primary">Done</button>
     </div>
   </aside>
 

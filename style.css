@@ -170,6 +170,13 @@ html, body {
 .phase-name.editing { overflow: visible; text-overflow: clip; color: #1f2328; }
 .phase-label button:hover { background: rgba(9, 105, 218, .1); color: #0969da; }
 .phase-remove { font-size: 15px; line-height: 1; }
+.phase-edit { font-size: 12px; }
+/* A folded phase's ✎: its name and notes. Faint until hovered. */
+.task.fold .fold-edit {
+  margin-left: 4px; padding: 0 4px; font: inherit; font-size: 12px; line-height: 18px;
+  color: #8c959f; background: none; border: none; border-radius: 4px; cursor: pointer; opacity: .7;
+}
+.task.fold .fold-edit:hover { opacity: 1; color: #0969da; background: rgba(9,105,218,.1); }
 
 /* ---------- Connectors ---------- */
 .conn {
@@ -383,7 +390,7 @@ html, body {
 }
 .task.selected.conflict { box-shadow: 0 0 0 2px #cf222e, 0 0 0 5px rgba(9,105,218,.5); }
 
-#props {
+#props, #phase-props {
   position: fixed;
   top: 84px;
   right: 16px;
@@ -401,8 +408,8 @@ html, body {
 #props.hours { width: min(460px, calc(100% - 32px)); }
 #props.hours .prop-row { flex-wrap: wrap; }
 #props.hours .prop-row .prop { min-width: 200px; }
-#props header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-#props h2 { margin: 0; font-size: 15px; }
+#props header, #phase-props header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+#props h2, #phase-props h2 { margin: 0; font-size: 15px; }
 #props h3 {
   margin: 14px 0 4px;
   font-size: 11px;
@@ -410,13 +417,13 @@ html, body {
   letter-spacing: .05em;
   color: #57606a;
 }
-#props-close {
+#props-close, .props-close {
   width: 28px; height: 28px;
   font-size: 20px; line-height: 1;
   border: none; border-radius: 6px;
   background: transparent; color: #57606a; cursor: pointer;
 }
-#props-close:hover { background: #eef1f4; }
+#props-close:hover, .props-close:hover { background: #eef1f4; }
 
 .prop {
   display: block;
@@ -759,7 +766,7 @@ body.legend-bottom #status { bottom: 50px; }
   }
 
   /* Task properties become a sheet along the bottom. */
-  #props {
+  #props, #phase-props {
     top: auto;
     left: 8px;
     right: 8px;
@@ -782,7 +789,7 @@ html, body {
   touch-action: none;
   overscroll-behavior: none;
 }
-#props, #help, #timeline { touch-action: pan-y; }   /* scroll containers: only vertical scrolling */
+#props, #phase-props, #help, #timeline { touch-action: pan-y; }   /* scroll containers: only vertical scrolling */
 @media (max-width: 640px) {
   #toolbar { left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); }
   #toolbar > .group { right: calc(12px + env(safe-area-inset-right)); }

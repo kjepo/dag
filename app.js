@@ -110,7 +110,7 @@ $(function () {
   // A closed phase is shown as one box; its moments stay in the model (dates,
   // conflicts, critical path) but are hidden. An open phase shows its moments,
   // kept together by graphviz (a cluster) inside a frame with the phase's name.
-  const folds = new Map();   // id ('f1') -> {id, name, members: Set, open, start, end, x, y, w, h, cy, o, $el, $frame}
+  const folds = new Map();   // id ('f1') -> {id, name, notes, members: Set, open, start, end, x, y, w, h, cy, o, $el, $frame}
   const foldOf = new Map();  // task id -> id of the closed phase that hides it
   let nextFoldId = 1;
   let nameEdit = null;       // {el, name, save}: a moment's or phase's name being edited in place
@@ -812,8 +812,8 @@ $(function () {
     return a === b ? a : `${a} … ${b}`;
   }
 
-  function createFold({ id, name, members, open = false }) {
-    const f = { id, name: name || defaultPhaseName(members), members, open, x: 0, y: 0, o: 0, visible: true };
+  function createFold({ id, name, notes = '', members, open = false }) {
+    const f = { id, name: name || defaultPhaseName(members), notes: typeof notes === 'string' ? notes : '', members, open, x: 0, y: 0, o: 0, visible: true };
     f.$el = $('<div class="task fold">').attr('data-id', id)
       .attr('title', 'A phase: moments folded into one box. Click to open it.').append(
         $('<div class="conn conn-in" title="Click, then pick a green connector: the whole phase comes after that moment">'),
@@ -827,6 +827,7 @@ $(function () {
       $('<div class="phase-label">').append(
         $('<button type="button" class="phase-fold" title="Fold the phase into one box" aria-label="Fold the phase">▾</button>'),
         $('<span class="phase-name" title="Double-click to rename the phase">'),
+        $('<button type="button" class="phase-edit" title="Name and notes" aria-label="Phase properties">✎</button>'),
         $('<button type="button" class="phase-remove" title="Remove the phase (the moments stay)" aria-label="Remove the phase">×</button>'))
     ).prependTo($world);
     // Fade in where the box showing the phase's first moment was.
@@ -882,11 +883,16 @@ $(function () {
     f.end = times.length ? formatTime(Math.max(...times)) : null;
     f.$el.toggleClass('dated', !!(f.start && f.end));
     if (!nameEdit || !f.$el[0].contains(nameEdit.el)) {   // not while it's being renamed in its box
+      const hasNotes = !!(f.notes && f.notes.trim());
       f.$el.find('.name').empty().append(
         $('<span class="fold-mark" aria-hidden="true">▸</span>'),
         document.createTextNode(f.name),
-        $('<span class="fold-count">').text(`Phase · ${ts.length} moments`));
+        hasNotes ? $('<span class="note-icon" aria-label="Has notes">').html(NOTE_ICON) : null,
+        $('<button type="button" class="fold-edit" title="Name and notes" aria-label="Phase properties">✎</button>'),
+        $('<span class="fold-count">').text(`Phase · ${ts.length} moments`))
+        .attr('title', hasNotes ? f.notes : null);
     }
+    f.$frame.find('.phase-label').attr('title', f.notes && f.notes.trim() ? f.notes : null);
     f.$el.find('.fields').empty().append(
       field('Start', f.start, formatTimeField),
       field('End', f.end, formatTimeField));
@@ -1572,7 +1578,7 @@ $(function () {
       })),
       edges: edges.map(e => ({ from: e.from, to: e.to, ...(e.wait != null ? { wait: e.wait } : {}) })),
       ...(orderHints.length ? { order: orderHints.map(h => [...h]) } : {}),
-      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, members: [...f.members], ...(f.open ? { open: true } : {}), ...(f.col ? { col: f.col } : {}) })) } : {}),
+      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, ...(f.notes ? { notes: f.notes } : {}), members: [...f.members], ...(f.open ? { open: true } : {}), ...(f.col ? { col: f.col } : {}) })) } : {}),
     };
   }
 
@@ -1589,6 +1595,7 @@ $(function () {
     updateMovable();
     layout();
     if (selectedId) fillProps();
+    if (phaseSel) fillPhaseProps();
     checkNewConflicts(!opts.quiet);
     const json = saveLocal();
     recordHistory(json, opts.coalesce);
@@ -1712,7 +1719,7 @@ $(function () {
         if (!ms.size) return;
         between(ms).forEach(id => ms.add(id));
         if (nestProblem(ms)) return;   // cutting across another phase: show its moments
-        const fold = createFold({ id: f.id, name: typeof f.name === 'string' && f.name.trim() ? f.name : null, members: ms, open: f.open === true });
+        const fold = createFold({ id: f.id, name: typeof f.name === 'string' && f.name.trim() ? f.name : null, notes: f.notes, members: ms, open: f.open === true });
         if (Number.isInteger(f.col) && f.col > 0) fold.col = f.col;
         const was = opts.prev && opts.prev.get(f.id);
         if (was) {
@@ -1907,11 +1914,11 @@ $(function () {
   // Keep keyboard focus in the task field: suppress focus changes on mousedown
   // everywhere except form fields and the properties panel.
   $(document).on('mousedown', e => {
-    if (!$(e.target).closest('input, select, textarea, [contenteditable], #props').length) e.preventDefault();
+    if (!$(e.target).closest('input, select, textarea, [contenteditable], #props, #phase-props').length) e.preventDefault();
   });
   // Only with a mouse: on a phone, focusing the field would pop up the keyboard on every tap.
   $(document).on('pointerup', ev => {
-    if (ev.originalEvent.pointerType === 'mouse' && !$(ev.target).closest('#props, .swal2-container, .phase-label, [contenteditable]').length) $input.trigger('focus');
+    if (ev.originalEvent.pointerType === 'mouse' && !$(ev.target).closest('#props, #phase-props, .swal2-container, .phase-label, [contenteditable]').length) $input.trigger('focus');
   });
 
   // Either connector can start a connection; the opposite side of other boxes
@@ -2310,7 +2317,7 @@ $(function () {
     folds.forEach(f => {
       if (!f.visible) return;
       const ts = [...f.members].map(id => parseTime(tasks.get(id).time)).filter(v => v != null);
-      items.push({ id: f.id, phase: true, name: f.name, size: f.members.size,
+      items.push({ id: f.id, phase: true, name: f.name, notes: f.notes, size: f.members.size,
                    a: ts.length ? Math.min(...ts) : null, b: ts.length ? Math.max(...ts) : null });
     });
     // By date; a phase before the moments that start with it.
@@ -2347,8 +2354,8 @@ $(function () {
         $('<span class="tl-dot">').css('background', TIMELINE_COLORS[i % TIMELINE_COLORS.length]),
         $('<div class="tl-body">').append(
           $('<div class="tl-name">').text(it.name),
-          it.phase ? $('<div class="tl-notes">').text(`Phase · ${it.size} moments`)
-                   : it.notes ? $('<div class="tl-notes">').text(it.notes) : null));
+          it.notes ? $('<div class="tl-notes">').text(it.notes)
+                   : it.phase ? $('<div class="tl-notes">').text(`Phase · ${it.size} moments`) : null));
       if (!it.phase) $li.addClass('tl-link').attr('title', 'Open this moment').on('click', () => { toggleTimeline(false); openProps(it.id); });
       $list.append($li);
     });
@@ -2384,6 +2391,7 @@ $(function () {
     while (foldOf.has(id) && !folds.get(foldOf.get(id)).open) expandFold(foldOf.get(id), { quiet: true });
     flushDates();
     cancelPending();
+    closePhaseProps();
     selectedId = id;
     $world.find('.task.selected').removeClass('selected');
     tasks.get(id).$el.addClass('selected');
@@ -2482,6 +2490,52 @@ $(function () {
     renderTask(t);
     changed();
   }
+
+  // ---- a phase's name and notes, in a panel like a moment's
+  const $phaseProps = $('#phase-props');
+  let phaseSel = null;
+  function openPhaseProps(id) {
+    if (!folds.has(id)) return;
+    closeProps();
+    if (picked.size) clearPicks();
+    if (pending) cancelPending();
+    phaseSel = id;
+    $phaseProps.prop('hidden', false);
+    fillPhaseProps();
+  }
+  function closePhaseProps() {
+    if (!phaseSel) return;
+    phaseSel = null;
+    $phaseProps.prop('hidden', true);
+    focusInput();
+  }
+  function fillPhaseProps() {
+    const f = folds.get(phaseSel);
+    if (!f) { closePhaseProps(); return; }
+    const active = document.activeElement;
+    if ($('#pp-name')[0] !== active) $('#pp-name').val(f.name);
+    if ($('#pp-notes')[0] !== active) $('#pp-notes').val(f.notes || '');
+    const ts = [...f.members].map(id => parseTime(tasks.get(id).time)).filter(v => v != null);
+    $('#pp-info').text(`${f.members.size} moments` + (ts.length ? ` · ${timelineWhen(Math.min(...ts), Math.max(...ts))}` : ''));
+  }
+  $('#pp-name').on('input', function () {
+    const f = folds.get(phaseSel), v = this.value.trim();
+    if (!f || !v) return;
+    f.name = v;
+    renderFold(f);
+    changed({ coalesce: 'phase-name:' + f.id });
+  }).on('blur', fillPhaseProps);   // an emptied name comes back
+  $('#pp-notes').on('input', function () {
+    const f = folds.get(phaseSel);
+    if (!f) return;
+    f.notes = this.value;
+    renderFold(f);
+    changed({ coalesce: 'phase-notes:' + f.id });
+  });
+  $('#pp-remove').on('click', () => { const id = phaseSel; closePhaseProps(); removePhase(id); });
+  $('#pp-done, #phase-props-close').on('click', closePhaseProps);
+  $(document).on('keydown', e => { if (e.key === 'Escape' && phaseSel && $help.prop('hidden')) closePhaseProps(); });
+  $phaseProps.on('keydown', 'input', e => { if (e.key === 'Enter') { e.preventDefault(); closePhaseProps(); } });
 
   // ---------------------------------------------------------------- resolve conflicts
   // Move moments that come too early (before a moment they come after, plus
@@ -2705,7 +2759,7 @@ $(function () {
   let phaseOpenTimer = null;
   const PHASE_OPEN_DELAY = 250;
   $world.on('click', '.task', function (e) {
-    if (suppressClick || $(e.target).closest('.conn, [contenteditable]').length) return;
+    if (suppressClick || $(e.target).closest('.conn, [contenteditable], .fold-edit').length) return;
     const id = $(this).attr('data-id');
     // Shift/⌘/Ctrl-click picks a box for a phase; while boxes are picked, a plain click (or tap) does too.
     if (e.shiftKey || e.metaKey || e.ctrlKey || picked.size) { clearTimeout(phaseOpenTimer); togglePick(id); return; }
@@ -2723,6 +2777,16 @@ $(function () {
     e.stopPropagation();
     if (!suppressClick) foldPhase($(this).closest('.phase-frame').attr('data-phase'));
   });
+  $world.on('click', '.phase-edit', function (e) {
+    e.stopPropagation();
+    if (!suppressClick) openPhaseProps($(this).closest('.phase-frame').attr('data-phase'));
+  });
+  $world.on('click', '.fold-edit', function (e) {
+    e.stopPropagation();
+    clearTimeout(phaseOpenTimer);
+    if (!suppressClick) openPhaseProps($(this).closest('.task').attr('data-id'));
+  });
+  $world.on('dblclick', '.fold-edit', e => e.stopPropagation());   // not a rename
   $world.on('click', '.phase-remove', function (e) {
     e.stopPropagation();
     if (!suppressClick) removePhase($(this).closest('.phase-frame').attr('data-phase'));
@@ -3149,7 +3213,7 @@ $(function () {
       return;
     }
 
-    if (drag && !drag.moved && e.type === 'pointerup') { cancelPending(); closeProps(); clearPicks(); }   // tap on the background
+    if (drag && !drag.moved && e.type === 'pointerup') { cancelPending(); closeProps(); closePhaseProps(); clearPicks(); }   // tap on the background
     drag = null;
     $canvas.removeClass('panning');
   });
