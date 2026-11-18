@@ -97,7 +97,7 @@ $(function () {
   function focusInput() { if (finePointer) $input.trigger('focus'); }
 
   // ---------------------------------------------------------------- model
-  const tasks = new Map();   // id -> {id, name, time, notes, locked, x, y, w, h, o, $el}
+  const tasks = new Map();   // id -> {id, name, time, notes, locked, noIn, noOut, x, y, w, h, o, $el}
   let edges = [];            // {from, to, el}   (from's right connector -> to's left connector)
   let nextId = 1;
   let pending = null;        // {id, side: 'in'|'out'} — the selected (black) connector
@@ -396,6 +396,7 @@ $(function () {
       .append(t.locked ? $('<span class="lock-icon" aria-label="Locked" title="Locked: never moved automatically">').html(LOCK_ICON) : null)
       .append(hasNotes ? $('<span class="note-icon" aria-label="Has notes">').html(NOTE_ICON) : null)
       .attr('title', hasNotes ? t.notes : null);
+    t.$el.toggleClass('no-in', !!t.noIn).toggleClass('no-out', !!t.noOut);
     t.$el.toggleClass('dated', isDated(t));   // thicker border; changes the size, so before measuring
     t.$el.find('.fields').empty().append(field(timeLabel(), t.time, formatTimeField));
     t.w = t.$el.outerWidth();
@@ -409,8 +410,10 @@ $(function () {
     t.cy = border + dividerY;                              // same point, from the box's outer top
   }
 
-  function createTask({ id, name, time = null, notes = '', locked = false }) {
-    const t = { id, name, time: typeof time === 'string' && time ? time : null, notes: typeof notes === 'string' ? notes : '', locked: locked === true, x: 0, y: 0, o: 0 };
+  // noIn / noOut: the moment takes no arcs in (out), and its left (right) circle is hidden.
+  function createTask({ id, name, time = null, notes = '', locked = false, noIn = false, noOut = false }) {
+    const t = { id, name, time: typeof time === 'string' && time ? time : null, notes: typeof notes === 'string' ? notes : '', locked: locked === true,
+                noIn: noIn === true, noOut: noOut === true, x: 0, y: 0, o: 0 };
     t.$el = $('<div class="task">').attr('data-id', id).append(
       $('<div class="conn conn-in" title="Click, then pick a green connector to connect">'),
       $('<div class="name">'),
@@ -440,6 +443,8 @@ $(function () {
   // Can we add from -> to without duplicating an edge or creating a cycle?
   function edgeProblem(from, to) {
     if (from === to) return 'A moment cannot come after itself';
+    if (tasks.get(from)?.noOut) return `Nothing comes after “${tasks.get(from).name}” (see its properties)`;
+    if (tasks.get(to)?.noIn) return `Nothing comes before “${tasks.get(to).name}” (see its properties)`;
     if (edges.some(e => e.from === from && e.to === to)) return 'Those moments are already connected';
     if (descendants(to).has(from)) return 'That connection would create a cycle';
     return null;
@@ -1119,11 +1124,13 @@ $(function () {
   // ones, so the whole phase comes after (or before) the other box.
   function boxArcs(from, to) {
     const f = folds.get(nodeOf(from)), g = folds.get(nodeOf(to));
-    const froms = f ? phaseSinks(f.members) : [from], tos = g ? phaseSources(g.members) : [to];
+    const froms = f ? phaseSinks(f.members).filter(id => !tasks.get(id).noOut) : [from];
+    const tos = g ? phaseSources(g.members).filter(id => !tasks.get(id).noIn) : [to];
     return froms.flatMap(a => tos.map(b => [a, b]));
   }
   function arcProblem(from, to) {
     const pairs = boxArcs(from, to);
+    if (!pairs.length) return 'Those moments take no arcs there (see their properties)';
     if (pairs.length === 1) return edgeProblem(...pairs[0]);
     if (nodeOf(from) === nodeOf(to)) return 'A moment cannot come after itself';
     const fresh = pairs.filter(([a, b]) => !edges.some(e => e.from === a && e.to === b));
@@ -1558,6 +1565,8 @@ $(function () {
         id: t.id, name: t.name, time: t.time,
         ...(t.notes ? { notes: t.notes } : {}),
         ...(t.locked ? { locked: true } : {}),
+        ...(t.noIn ? { noIn: true } : {}),
+        ...(t.noOut ? { noOut: true } : {}),
         ...(t.pinned ? { pos: { x: Math.round(t.pinned.x), y: Math.round(t.pinned.y) } } : {}),
         ...(t.col ? { col: t.col } : {}),
       })),
@@ -1680,7 +1689,7 @@ $(function () {
       const id = typeof t.id === 'string' && /^t\d+$/.test(t.id) && !tasks.has(t.id) ? t.id : null;
       if (!id) { skipped++; return; }
       // Task graphs (start / end) open too: a task becomes the moment it starts (or else ends).
-      const task = createTask({ id, name: t.name, time: t.time ?? t.start ?? t.end, notes: t.notes, locked: t.locked });
+      const task = createTask({ id, name: t.name, time: t.time ?? t.start ?? t.end, notes: t.notes, locked: t.locked, noIn: t.noIn, noOut: t.noOut });
       const was = opts.prev && opts.prev.get(id);
       if (was) {   // the same box as before: move it from where it was instead of fading in
         Object.assign(task, { x: was.x, y: was.y, o: 1, fresh: false });
@@ -2074,7 +2083,9 @@ $(function () {
     });
     if (name == null || !tasks.has(t.id) || foldOf.has(t.id)) return;
     const id = 't' + nextId++;
-    createTask({ id, name: name.trim(), locked: t.locked });
+    createTask({ id, name: name.trim(), locked: t.locked, noOut: t.noOut });   // the new one is now the last
+    t.noOut = false;
+    renderTask(t);
     edges.forEach(x => { if (x.from === t.id) x.from = id; });
     addEdge(t.id, id);
     orderHints = orderHints.filter(h => !h.includes(t.id));
@@ -2284,6 +2295,81 @@ $(function () {
     if (e.key === 'Escape' && !$help.prop('hidden')) { toggleHelp(false); e.stopImmediatePropagation(); }
   });
 
+  // ---------------------------------------------------------------- timeline
+  // The graph as a dated list, as it is shown: moments (name, notes) and
+  // phases (name, first to last date), with undated ones at the end.
+  const $timeline = $('#timeline');
+  const TIMELINE_COLORS = ['#f1a7a1', '#f5cf8f', '#f7ef8a', '#cdeca4', '#a8e4f0', '#a9c3f5', '#b9b3f3', '#e9b8f0'];
+  function timelineEntries() {
+    const items = [];
+    shownNodes().forEach(n => {
+      if (!tasks.has(n.id)) return;
+      const v = parseTime(n.time);
+      items.push({ id: n.id, name: n.name, notes: n.notes, a: v, b: v });
+    });
+    folds.forEach(f => {
+      if (!f.visible) return;
+      const ts = [...f.members].map(id => parseTime(tasks.get(id).time)).filter(v => v != null);
+      items.push({ id: f.id, phase: true, name: f.name, size: f.members.size,
+                   a: ts.length ? Math.min(...ts) : null, b: ts.length ? Math.max(...ts) : null });
+    });
+    // By date; a phase before the moments that start with it.
+    return items.sort((x, y) => (x.a ?? Infinity) - (y.a ?? Infinity) || (x.phase ? 0 : 1) - (y.phase ? 0 : 1) ||
+      (x.b ?? 0) - (y.b ?? 0) || x.name.localeCompare(y.name));
+  }
+  // "May 1", "Jul 1 – Oct 20", "Nov 1 – 22"; with hours: "Nov 22, 09:00", "Nov 22, 09:00 – 12:00".
+  function timelineWhen(a, b) {
+    const dayOf = n => hourMode ? Math.floor(n / MIN_PER_DAY) : n;
+    // Spaces inside a date don't break, so a long range wraps only at its dash.
+    const at = n => (hourMode ? `${shortDate(dayOf(n))}, ${clockTime(n)}` : shortDate(n)).replace(/ /g, '\u00a0');
+    if (a === b) return at(a);
+    if (hourMode && dayOf(a) === dayOf(b)) return `${at(a)} – ${clockTime(b)}`;
+    const da = new Date(dayOf(a) * DAY_MS), db = new Date(dayOf(b) * DAY_MS);
+    if (!hourMode && da.getUTCFullYear() === db.getUTCFullYear() && da.getUTCMonth() === db.getUTCMonth()) return `${at(a)} – ${db.getUTCDate()}`;
+    return `${at(a)} – ${at(b)}`;
+  }
+  function buildTimeline() {
+    const $list = $('#timeline-list').empty();
+    const items = timelineEntries();
+    if (!items.length) { $list.append($('<li class="tl-empty">').text('Nothing to show yet: add some moments.')); return; }
+    const yearOf = n => new Date((hourMode ? Math.floor(n / MIN_PER_DAY) : n) * DAY_MS).getUTCFullYear();
+    const years = new Set(items.filter(it => it.a != null).map(it => yearOf(it.a)));
+    let year = null, undated = false;
+    items.forEach((it, i) => {
+      // A year heading when the timeline spans several years; one before the undated ones.
+      if (it.a != null && years.size > 1 && yearOf(it.a) !== year) {
+        year = yearOf(it.a);
+        $list.append($('<li class="tl-heading">').text(year));
+      }
+      if (it.a == null && !undated) { undated = true; $list.append($('<li class="tl-heading">').text('No date')); }
+      const $li = $('<li class="tl-item">').toggleClass('tl-phase', !!it.phase).append(
+        $('<span class="tl-when">').text(it.a == null ? '' : timelineWhen(it.a, it.b)),
+        $('<span class="tl-dot">').css('background', TIMELINE_COLORS[i % TIMELINE_COLORS.length]),
+        $('<div class="tl-body">').append(
+          $('<div class="tl-name">').text(it.name),
+          it.phase ? $('<div class="tl-notes">').text(`Phase · ${it.size} moments`)
+                   : it.notes ? $('<div class="tl-notes">').text(it.notes) : null));
+      if (!it.phase) $li.addClass('tl-link').attr('title', 'Open this moment').on('click', () => { toggleTimeline(false); openProps(it.id); });
+      $list.append($li);
+    });
+    // The date column: as wide as the longest date, up to a limit (longer ones wrap).
+    const list = $list[0];
+    list.style.setProperty('--tl-when', 'max-content');
+    const widest = Math.max(0, ...$list.find('.tl-when').get().map(el => el.getBoundingClientRect().width));
+    const cap = window.innerWidth < 640 ? 110 : 240;
+    list.style.setProperty('--tl-when', Math.ceil(Math.min(Math.max(widest, 48), cap)) + 'px');
+  }
+  function toggleTimeline(show) {
+    $timeline.prop('hidden', !show);
+    if (show) buildTimeline();   // once shown, so the dates can be measured
+  }
+  $('#timeline-btn').on('click', () => toggleTimeline(true));
+  $('#timeline-close').on('click', () => toggleTimeline(false));
+  $timeline.on('click', e => { if (e.target === $timeline[0]) toggleTimeline(false); });
+  $(document).on('keydown', e => {
+    if (e.key === 'Escape' && !$timeline.prop('hidden')) { toggleTimeline(false); e.stopImmediatePropagation(); }
+  });
+
   // ---------------------------------------------------------------- pan & zoom
   // ---------------------------------------------------------------- properties panel
   const $props = $('#props');
@@ -2343,6 +2429,14 @@ $(function () {
     $('#p-suggest').prop('hidden', !sug.any);
     $('#p-suggest-text').text(sug.reason);
     $('#p-locked').prop('checked', !!t.locked);
+    // The circles can only be hidden on a side without arcs.
+    const ins = edges.some(e => e.to === t.id), outs = edges.some(e => e.from === t.id);
+    $('#p-no-in').prop('checked', !!t.noIn).prop('disabled', ins && !t.noIn);
+    $('#p-no-out').prop('checked', !!t.noOut).prop('disabled', outs && !t.noOut);
+    $('#p-no-in').closest('label').attr('title', ins && !t.noIn ? 'It has arcs coming in; remove them first' : null)
+      .find('.side').text(vertical ? 'top' : 'left');
+    $('#p-no-out').closest('label').attr('title', outs && !t.noOut ? 'It has arcs going out; remove them first' : null)
+      .find('.side').text(vertical ? 'bottom' : 'right');
     $('#p-slack').prop('hidden', !t.slack).text(t.slack ? slackText(t.slack) : '')
       .toggleClass('critical', !!t.slack && t.slack.slack <= 0);
     // ×: only for a time the moment really has (not a suggestion).
@@ -2707,6 +2801,13 @@ $(function () {
     renderTask(t);   // the box shows a lock icon
     changed();
   });
+  $('#p-no-in, #p-no-out').on('change', function () {
+    const t = tasks.get(selectedId);
+    if (!t) return;
+    t[this.id === 'p-no-in' ? 'noIn' : 'noOut'] = this.checked;
+    renderTask(t);
+    changed();
+  });
   $('#p-notes').on('input', function () {
     const t = tasks.get(selectedId);
     if (!t) return;
@@ -2742,6 +2843,7 @@ $(function () {
   $('#props-close').on('click', closeProps);
   $('#p-accept').on('click', acceptSuggestion);
   $('#p-delete').on('click', () => deleteBoxes([selectedId]));
+  $('#p-split').on('click', () => { const t = tasks.get(selectedId); if (t) { closeProps(); insertAfter(t); } });
   // Keep the field being edited focused when pressing Save / Delete: blurring it
   // first would apply it and re-fill the panel, which can move the button away
   // from under the pointer before the click lands.

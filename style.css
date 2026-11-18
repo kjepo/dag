@@ -512,6 +512,16 @@ html, body {
   cursor: pointer;
 }
 .danger:hover { background: #cf222e; border-color: #cf222e; color: #fff; }
+.secondary {
+  padding: 7px;
+  font: inherit;
+  color: #1f2328;
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.secondary:hover { background: #eef1f4; }
 
 /* ---------- Suggested dates ---------- */
 .prop input.suggested {
@@ -772,7 +782,7 @@ html, body {
   touch-action: none;
   overscroll-behavior: none;
 }
-#props, #help { touch-action: pan-y; }   /* scroll containers: only vertical scrolling */
+#props, #help, #timeline { touch-action: pan-y; }   /* scroll containers: only vertical scrolling */
 @media (max-width: 640px) {
   #toolbar { left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); }
   #toolbar > .group { right: calc(12px + env(safe-area-inset-right)); }
@@ -792,6 +802,10 @@ html, body {
 .task .lock-icon { display: inline-block; margin-left: 6px; color: #57606a; vertical-align: -1px; }
 .prop-check { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; color: #57606a; cursor: pointer; }
 .prop-check input { margin: 0; }
+.prop-check:has(input:disabled) { opacity: .55; cursor: default; }
+.prop-check + .prop-check { margin-top: 6px; }
+/* A moment that takes no arcs in (out) has no circle on that side. */
+.task.no-in .conn-in, .task.no-out .conn-out { display: none; }
 #status.has-action { pointer-events: auto; display: flex; align-items: center; gap: 12px; }
 #status button {
   padding: 3px 10px; font: inherit; font-weight: 600; color: #fff;
@@ -902,4 +916,63 @@ body.legend-bottom #pickbar { bottom: calc(50px + env(safe-area-inset-bottom)); 
 @media (max-width: 640px) {
   #pickbar { left: calc(12px + env(safe-area-inset-left)); transform: none; max-width: calc(100% - 96px); }
   #pickbar .pick-count { overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* ---------- Timeline ---------- */
+#timeline {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: rgba(31,35,40,.35);
+  padding: 16px;
+  overflow-y: auto;
+}
+#timeline:not([hidden]) { display: flex; }
+.timeline-panel {
+  position: relative;
+  margin: auto;
+  width: min(900px, 100%);
+  padding: 20px 24px 20px;
+  background: #f6f8fa;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.2);
+  font-size: 14px;
+}
+.timeline-panel h2 { margin: 0 0 14px; font-size: 18px; }
+#timeline-close {
+  position: absolute; top: 10px; right: 10px; width: 30px; height: 30px;
+  font-size: 20px; line-height: 1; border: none; border-radius: 6px;
+  background: transparent; color: #57606a; cursor: pointer;
+}
+#timeline-close:hover { background: #eef1f4; }
+#timeline-list { list-style: none; margin: 0; padding: 0; }
+.tl-item {
+  display: grid;
+  grid-template-columns: var(--tl-when, 120px) 28px 1fr;
+  align-items: start;
+  position: relative;
+  padding-bottom: 14px;
+}
+/* The line through the dots, from one dot to the next. */
+.tl-item::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--tl-when, 120px) + 13px);
+  top: 14px;
+  bottom: -6px;
+  width: 2px;
+  background: #d0d7de;
+}
+.tl-item:last-child::before, .tl-item:has(+ .tl-heading)::before { display: none; }
+.tl-when { padding-right: 12px; text-align: right; color: #8c959f; font-size: 13px; line-height: 20px; padding-top: 1px; }
+.tl-dot { position: relative; width: 12px; height: 12px; margin: 5px 0 0 8px; border-radius: 50%; }
+.tl-name { font-size: 15px; line-height: 22px; color: #1f2328; }
+.tl-phase .tl-name { font-weight: 600; }
+.tl-notes { margin-top: 1px; font-size: 13px; color: #57606a; white-space: pre-line; overflow-wrap: anywhere; }
+.tl-link { cursor: pointer; }
+.tl-link:hover .tl-name { color: #0969da; }
+.tl-heading { margin: 6px 0 10px calc(var(--tl-when, 120px) + 28px); font-size: 12px; font-weight: 600; letter-spacing: .04em; color: #8c959f; text-transform: uppercase; }
+.tl-empty { color: #8c959f; }
+@media (max-width: 640px) {
+  .tl-when { font-size: 12px; }
 }

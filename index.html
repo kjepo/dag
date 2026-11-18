@@ -48,6 +48,7 @@
         <button id="undo" type="button" role="menuitem" disabled>Undo <kbd>⌘/Ctrl Z</kbd></button>
         <button id="redo" type="button" role="menuitem" disabled>Redo <kbd>⇧⌘Z · Ctrl Y</kbd></button>
         <hr>
+        <button id="timeline-btn" type="button" role="menuitem">Timeline</button>
         <button id="insert-after" type="button" role="menuitem">Split… <kbd>/</kbd></button>
         <button id="direction-menu" type="button" role="menuitem" class="narrow-only">Switch to vertical layout</button>
         <button id="reset-order" type="button" role="menuitem">Reset box order</button>
@@ -70,6 +71,13 @@
     </div>
   </div>
 
+  <div id="timeline" hidden>
+    <div class="timeline-panel" role="dialog" aria-labelledby="timeline-title">
+      <button id="timeline-close" type="button" aria-label="Close timeline">×</button>
+      <h2 id="timeline-title">Timeline</h2>
+      <ol id="timeline-list"></ol>
+    </div>
+  </div>
   <div id="help" hidden>
     <div class="help-panel" role="dialog" aria-labelledby="help-title">
       <button id="help-close" type="button" aria-label="Close help">×</button>
@@ -77,11 +85,11 @@
 
       <h3>Moments</h3>
       <p>Each box is a <b>moment</b>: something that happens at one point in time, like “Entries open” or “Judging”. A moment has a date (or a date and a time of day) but no duration. Type its name in the text field and press <kbd>Enter</kbd>. Keep typing to add the next one. The field always keeps focus. A moment with its date set gets a <b>thicker border</b> and is placed after the undated moments in its column, sorted by date.</p>
-      <p><b>Split</b> a moment in two: press <kbd>/</kbd> (with the text field empty), or choose <b>Split…</b> in the ☰ menu, to add a new moment right after the selected moment (the one shown in the panel, or the only box picked). It is only available with exactly one moment selected. You name it. The selected moment keeps the arcs coming in; the moments that came after it now come after the new one.</p>
+      <p><b>Split</b> a moment in two: press <kbd>/</kbd> (with the text field empty), or click <b>Split…</b> in the properties panel or the ☰ menu, to add a new moment right after the selected moment (the one shown in the panel, or the only box picked). It is only available with exactly one moment selected. You name it. The selected moment keeps the arcs coming in; the moments that came after it now come after the new one.</p>
 
       <h3>Moment properties</h3>
       <p><b>Double-click</b> a moment’s name to rename it right in its box: type, then <kbd>Enter</kbd> (or click elsewhere) to keep it, or <kbd>Esc</kbd> to cancel.</p>
-      <p>Click a box to edit its name, date and notes (a box with notes shows a small note icon; hover over the name to read them), see and remove its arcs (including ones that aren’t drawn), or delete it. The <b>×</b> next to the date clears it. A missing date is suggested (in <i>purple italics</i>) from the connected moments: as soon as the moments before it allow, or else as late as the moments after it allow. Click <b>Use suggested date</b> to keep it. <b>Auto-schedule…</b> in the ☰ menu does that for every moment at once: each moment without a date comes as soon as the moments before it allow (moments with nothing before them get a date you pick). Dates you have set are never moved, and locked moments are left alone. Changes are applied as you make them; <b>Save moment</b> (or <kbd>Enter</kbd>) confirms and closes the panel. Close with <kbd>Esc</kbd> or by clicking the background.</p>
+      <p>Click a box to edit its name, date and notes (a box with notes shows a small note icon; hover over the name to read them), see and remove its arcs (including ones that aren’t drawn), or delete it. The <b>×</b> next to the date clears it. A missing date is suggested (in <i>purple italics</i>) from the connected moments: as soon as the moments before it allow, or else as late as the moments after it allow. Click <b>Use suggested date</b> to keep it. <b>Auto-schedule…</b> in the ☰ menu does that for every moment at once: each moment without a date comes as soon as the moments before it allow (moments with nothing before them get a date you pick). Dates you have set are never moved, and locked moments are left alone. Changes are applied as you make them; <b>Nothing comes before it</b> / <b>Nothing comes after it</b> hide the box’s left / right circle (top / bottom when vertical), for a first or last moment like “Project kickoff” or “Release”: no arcs can then be connected on that side. They can only be ticked while there are no arcs on that side. <b>Save moment</b> (or <kbd>Enter</kbd>) confirms and closes the panel. Close with <kbd>Esc</kbd> or by clicking the background.</p>
       <p><b>Deleting:</b> <kbd>Delete</kbd> (or <kbd>Backspace</kbd>, while nothing is being typed) deletes the moment shown in the panel, or all picked boxes (see Phases; the bar at the bottom also has a <b>Delete</b> button). A folded phase’s box deletes every moment in it. When arcs run through what is deleted, you choose: <b>Delete with arcs</b>, or <b>Delete and reconnect</b>, which links every moment before the deleted ones straight to every moment after them, with the longest total wait along the old way, so nothing may come earlier than before. Undo brings it all back.</p>
 
       <h3>Dependencies</h3>
@@ -102,6 +110,8 @@
       <h3>Critical path</h3>
       <p>Press <kbd>!</kbd> (or use <b>Critical path</b> in the ☰ menu) to show which moments set the date of the last moment. They and the arcs between them turn <b class="orange">orange</b>: any delay there delays what comes after. Every other moment gets a small label with its <i>slack</i>, how much later it could be without delaying anything, e.g. <b>+1h 15m</b> or <b>+3d</b>. The properties panel says how late it can be. A moment with a <b class="red">−</b> label is behind: something after it would have to move. A moment without a date counts as early as the moments before it allow; one with no dated moment before it is left out. Press <kbd>!</kbd> again to hide it.</p>
 
+      <h3>Timeline</h3>
+      <p><b>Timeline</b> in the ☰ menu lists the graph in date order, as it is shown: each moment with its name and notes, and each phase with its name and its first to last date. A folded phase is one line; an open phase has its line, and its moments follow. Moments without a date are listed at the end. Click a moment to open it. Close with <b>×</b>, <kbd>Esc</kbd>, or a click outside.</p>
       <h3>Phases</h3>
       <p>Any moments can be grouped into a <b>phase</b>, like “Judging”, shown as a single box. Pick the boxes: <kbd>Shift</kbd>-click them (or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>-click) with a mouse, or on a touch screen <b>press and hold</b> one box, then tap the others. Picked boxes get a blue outline; click or tap one again to unpick it. A bar at the bottom shows how many are picked: <b>Group to phase</b> makes the phase and lets you type its name right in the box, <b>Cancel</b> (or <kbd>Esc</kbd>, or a click on the background) unpicks them all. A moment that lies on a path between two picked moments goes into the phase too, so a phase never has arcs going out and coming back in; the same happens when a later arc puts a moment between two of its moments. The box looks like a stack of cards. A badge on top says how many moments it holds; the box shows its start and end: the earliest and latest date inside. It turns <b class="orange">orange</b> or <b class="red">red</b> when a moment inside is critical or in conflict. Connect arcs to it as to any box: an arc to it goes to each of its first moments, an arc from it leaves from each of its last ones, so the whole phase comes after (or before) the other moment.</p>
       <p>Click a phase’s box to <b>open</b> it: its moments come out and stay together inside a dashed frame with the phase’s name on top, so you can see which moments belong to it and edit them. Click <b>▾</b> before the name to fold them back into one box. <b>Double-click</b> the name, on the frame or on the folded box, to rename the phase right there, as with a moment’s name: type, then <kbd>Enter</kbd> (or click elsewhere) to keep it, or <kbd>Esc</kbd> to cancel. The <b>×</b> after the name removes the phase and keeps its moments. To add a moment to an open phase, <b>drag</b> it onto the frame (pull it sideways first if it has arcs; the frame turns green), and drop it. Drag a moment out of its frame and drop it outside to take it out of the phase. A folded phase’s box can be dragged the same way, taking all its moments along, and slid up or down (left or right, when vertical) to reorder it among the boxes next to it. A moment that lies between two others of the phase has to stay in it. Phases, open or folded, are saved with the graph.</p>
@@ -155,6 +165,8 @@
     </label>
     <p id="p-slack" class="hint slack-line" hidden></p>
     <label class="prop-check"><input id="p-locked" type="checkbox"> Locked: never moved by Resolve conflicts, nor dated by Auto-schedule</label>
+    <label class="prop-check"><input id="p-no-in" type="checkbox"> Nothing comes before it (no <span class="side">left</span> circle)</label>
+    <label class="prop-check"><input id="p-no-out" type="checkbox"> Nothing comes after it (no <span class="side">right</span> circle)</label>
 
     <div id="p-suggest" class="suggest" hidden>
       <p id="p-suggest-text"></p>
@@ -176,6 +188,7 @@
 
     <div class="prop-actions">
       <button id="p-delete" type="button" class="danger">Delete moment</button>
+      <button id="p-split" type="button" class="secondary" title="A new moment right after this one (/)">Split…</button>
       <button id="p-save" type="button" class="primary">Save moment</button>
     </div>
   </aside>
