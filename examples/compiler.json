@@ -1,0 +1,49 @@
+{
+  "format": "moment-dag",
+  "version": 1,
+  "layout": "horizontal",
+  "timeUnit": "day",
+  "tasks": [
+    { "id": "t1",  "name": "Source code" },
+    { "id": "t2",  "name": "Lexer",                  "notes": "Turns characters into tokens: keywords, names, numbers, operators." },
+    { "id": "t3",  "name": "Parser",                 "notes": "Builds the abstract syntax tree (AST) from the tokens, following the grammar." },
+    { "id": "t4",  "name": "Name resolution",        "notes": "Links every use of a name to its declaration, filling the symbol table." },
+    { "id": "t5",  "name": "Type checker" },
+    { "id": "t6",  "name": "IR generation",          "notes": "Lowers the AST to an intermediate representation, e.g. SSA form." },
+    { "id": "t7",  "name": "Inlining" },
+    { "id": "t8",  "name": "Constant folding" },
+    { "id": "t9",  "name": "Dead code elimination" },
+    { "id": "t10", "name": "Instruction selection" },
+    { "id": "t11", "name": "Register allocation" },
+    { "id": "t12", "name": "Instruction scheduling" },
+    { "id": "t13", "name": "Code emission" },
+    { "id": "t14", "name": "Assembler" },
+    { "id": "t15", "name": "Runtime library" },
+    { "id": "t16", "name": "Linker" },
+    { "id": "t17", "name": "Executable" }
+  ],
+  "edges": [
+    { "from": "t1",  "to": "t2" },
+    { "from": "t2",  "to": "t3" },
+    { "from": "t3",  "to": "t4" },
+    { "from": "t4",  "to": "t5" },
+    { "from": "t5",  "to": "t6" },
+    { "from": "t6",  "to": "t7" },
+    { "from": "t7",  "to": "t8" },
+    { "from": "t8",  "to": "t9" },
+    { "from": "t9",  "to": "t10" },
+    { "from": "t10", "to": "t11" },
+    { "from": "t11", "to": "t12" },
+    { "from": "t12", "to": "t13" },
+    { "from": "t13", "to": "t14" },
+    { "from": "t14", "to": "t16" },
+    { "from": "t15", "to": "t16" },
+    { "from": "t16", "to": "t17" }
+  ],
+  "folds": [
+    { "id": "f1", "name": "Front end",  "members": ["t2", "t3", "t4", "t5"] },
+    { "id": "f2", "name": "Middle end", "members": ["t6", "t7", "t8", "t9"], "open": true },
+    { "id": "f3", "name": "Optimizer",  "members": ["t7", "t8", "t9"] },
+    { "id": "f4", "name": "Back end",   "members": ["t10", "t11", "t12", "t13"] }
+  ]
+}

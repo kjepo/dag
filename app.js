@@ -1001,21 +1001,27 @@ $(function () {
     });
     return best;
   }
-  // Moment `id` dropped into phase `target` (null: outside every phase): it ends
-  // up in target and the phases around it, and leaves the others. Returns null
-  // when nothing changes, {error}, or {next: Map(phase -> new members), joined, left}.
+  // Box `id` (a moment, or a folded phase with all its moments) dropped into
+  // phase `target` (null: outside every phase): it ends up in target and the
+  // phases around it, and leaves the others. A dragged phase and the phases
+  // inside it keep their moments. Returns null when nothing changes, {error},
+  // or {next: Map(phase -> new members), joined, left}.
   function planPhaseMove(id, target) {
+    const ids = membersOf(id), self = folds.get(id);
+    const own = g => self && (g === self || contains(self, g.members));   // the dragged phase, or one inside it
+    if (target && own(target)) return null;
     const want = new Set(target ? [...folds.values()].filter(f => f === target || contains(f, target.members)) : []);
-    const now = [...folds.values()].filter(f => f.members.has(id));
+    const now = [...folds.values()].filter(f => !own(f) && [...ids].every(x => f.members.has(x)));
     if (now.length === want.size && now.every(f => want.has(f))) return null;
-    const name = `“${tasks.get(id).name}”`;
+    const name = `“${nodeObj(id).name}”`;
     const next = new Map();
     for (const f of folds.values()) {
+      if (own(f)) { next.set(f, new Set(f.members)); continue; }
       const ms = new Set(f.members);
-      if (want.has(f)) ms.add(id); else ms.delete(id);
+      ids.forEach(x => { if (want.has(f)) ms.add(x); else ms.delete(x); });
       if (ms.size) {
         const extra = between(ms);
-        if (extra.has(id)) return { error: `${name} lies between moments of the phase “${f.name}”, so it stays in it` };
+        if ([...ids].some(x => extra.has(x))) return { error: `${name} lies between moments of the phase “${f.name}”, so it stays in it` };
         extra.forEach(x => ms.add(x));
       }
       next.set(f, ms);
@@ -1184,7 +1190,8 @@ $(function () {
     const depth = id => {
       if (level.has(id)) return level.get(id);
       level.set(id, 0);   // (the graph is acyclic; this only guards against surprises)
-      const d = Math.max(-1, ...(preds.get(id) || []).map(depth)) + 1;
+      // A box the user moved to a later column (row) stays there: n.col.
+      const d = Math.max(Math.max(-1, ...(preds.get(id) || []).map(depth)) + 1, nodeObj(id).col || 0);
       level.set(id, d);
       return d;
     };
@@ -1552,10 +1559,11 @@ $(function () {
         ...(t.notes ? { notes: t.notes } : {}),
         ...(t.locked ? { locked: true } : {}),
         ...(t.pinned ? { pos: { x: Math.round(t.pinned.x), y: Math.round(t.pinned.y) } } : {}),
+        ...(t.col ? { col: t.col } : {}),
       })),
       edges: edges.map(e => ({ from: e.from, to: e.to, ...(e.wait != null ? { wait: e.wait } : {}) })),
       ...(orderHints.length ? { order: orderHints.map(h => [...h]) } : {}),
-      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, members: [...f.members], ...(f.open ? { open: true } : {}) })) } : {}),
+      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, members: [...f.members], ...(f.open ? { open: true } : {}), ...(f.col ? { col: f.col } : {}) })) } : {}),
     };
   }
 
@@ -1679,16 +1687,13 @@ $(function () {
         task.$el.css({ left: was.x, top: was.y, opacity: 1 });
       }
       if (t.pos && isFinite(t.pos.x) && isFinite(t.pos.y)) task.pinned = { x: +t.pos.x, y: +t.pos.y };
+      if (Number.isInteger(t.col) && t.col > 0) task.col = t.col;
       nextId = Math.max(nextId, parseInt(id.slice(1), 10) + 1);
     });
     data.edges.forEach(e => {
       if (!e || !tasks.has(e.from) || !tasks.has(e.to) || edgeProblem(e.from, e.to)) { skipped++; return; }
       addEdge(e.from, e.to, validWait(e.wait));
     });
-    if (Array.isArray(data.order)) {
-      orderHints = data.order.filter(h => Array.isArray(h) && h.length === 2 &&
-        tasks.has(h[0]) && tasks.has(h[1]) && h[0] !== h[1]).map(h => [h[0], h[1]]);
-    }
     if (Array.isArray(data.folds)) {
       data.folds.forEach(f => {
         if (!f || typeof f.id !== 'string' || !/^f\d+$/.test(f.id) || folds.has(f.id)) return;
@@ -1699,6 +1704,7 @@ $(function () {
         between(ms).forEach(id => ms.add(id));
         if (nestProblem(ms)) return;   // cutting across another phase: show its moments
         const fold = createFold({ id: f.id, name: typeof f.name === 'string' && f.name.trim() ? f.name : null, members: ms, open: f.open === true });
+        if (Number.isInteger(f.col) && f.col > 0) fold.col = f.col;
         const was = opts.prev && opts.prev.get(f.id);
         if (was) {
           Object.assign(fold, { x: was.x, y: was.y, o: 1 });
@@ -1706,6 +1712,11 @@ $(function () {
         }
         nextFoldId = Math.max(nextFoldId, parseInt(f.id.slice(1), 10) + 1);
       });
+    }
+    // The order within a rank, of moments and folded phases (so after the phases).
+    if (Array.isArray(data.order)) {
+      orderHints = data.order.filter(h => Array.isArray(h) && h.length === 2 &&
+        nodeObj(h[0]) && nodeObj(h[1]) && h[0] !== h[1]).map(h => [h[0], h[1]]);
     }
     if (!opts.keepView) {
       userMoved = false;
@@ -2187,7 +2198,7 @@ $(function () {
   function reorderRank(t, start) {
     const key = rankOf.get(t.id);
     if (key == null) return false;
-    const members = [...tasks.values()].filter(o => rankOf.get(o.id) === key && hasEdges(o.id) && !o.pinned);
+    const members = shownNodes().filter(o => rankOf.get(o.id) === key && hasEdges(o.id) && !o.pinned);
     if (members.length < 2) return false;
     const pos = o => o === t ? along(start) : along(o);
     const oldOrder = [...members].sort((a, b) => pos(a) - pos(b)).map(o => o.id);
@@ -2199,8 +2210,49 @@ $(function () {
     return true;
   }
 
+  // Connected box t dropped well to the side: into the column (row, when
+  // vertical) of the box nearest to it, between its neighbours there. It may go
+  // later than its arcs need, but not before a box that leads to it, nor at or
+  // after one it leads to. Returns true when it moved.
+  function moveToColumn(t) {
+    const lv = earliestLevels();
+    const across = n => vertical ? n.y + n.h / 2 : n.x + n.w / 2;
+    const others = shownNodes().filter(n => n !== t && lv.has(n.id));
+    if (!lv.has(t.id) || !others.length) return false;
+    const near = others.reduce((a, b) => Math.abs(across(b) - across(t)) < Math.abs(across(a) - across(t)) ? b : a);
+    const L = lv.get(near.id);
+    if (L === lv.get(t.id)) return false;
+    const arcs = nodeEdges(true);
+    const preds = arcs.filter(([, to]) => to === t.id).map(([from]) => from);
+    const succs = arcs.filter(([from]) => from === t.id).map(([, to]) => to);
+    const natural = preds.length ? Math.max(...preds.map(id => lv.get(id))) + 1 : 0;
+    const word = vertical ? 'row' : 'column';
+    if (L < natural) {
+      const p = preds.find(id => lv.get(id) >= L);
+      showStatus(`“${t.name}” comes after “${nodeObj(p).name}”, so it can’t go in that ${word}`, { error: true });
+      return false;
+    }
+    const s = succs.find(id => lv.get(id) <= L);
+    if (s) {
+      showStatus(`“${t.name}” comes before “${nodeObj(s).name}”, so it can’t go in that ${word}`, { error: true });
+      return false;
+    }
+    t.col = L > natural ? L : null;
+    // Its place in the new column: by where it was dropped.
+    const peers = others.filter(n => lv.get(n.id) === L && hasEdges(n.id) && !n.pinned);
+    const order = [...peers, t].sort((a, b) => along(a) - along(b)).map(n => n.id);
+    const inRank = new Set([...order, t.id]);
+    orderHints = orderHints.filter(([a, b]) => !inRank.has(a) && !inRank.has(b));
+    for (let i = 1; i < order.length; i++) orderHints.push([order[i - 1], order[i]]);
+    showStatus(`Moved “${t.name}” to the ${word} of “${near.name}”`, { action: { label: 'Undo', run: undo } });
+    return true;
+  }
+
   $('#reset-order').on('click', () => {
-    if (!orderHints.length) { showStatus('The boxes are already in the automatic order'); return; }
+    const cols = [...tasks.values(), ...folds.values()].some(n => n.col);
+    if (!orderHints.length && !cols) { showStatus('The boxes are already in the automatic order'); return; }
+    tasks.forEach(t => { t.col = null; });
+    folds.forEach(f => { f.col = null; });
     orderHints = [];
     changed();
     showStatus('Box order reset');
@@ -2832,10 +2884,11 @@ $(function () {
       }, LONG_PRESS) };
     }
     if ($task.length) {
-      const t = tasks.get($task.attr('data-id'));
-      if (!t) return;   // a folded group: clicking it opens it
-      // Boxes without arcs move freely; connected ones slide along their rank to reorder it.
-      const rank = !$task.hasClass('movable');
+      const t = nodeObj($task.attr('data-id'));
+      if (!t) return;
+      // Boxes without arcs move freely; connected ones (and folded phases) slide
+      // along their rank to reorder it, or are pulled sideways into or out of a phase.
+      const rank = !(tasks.has(t.id) && $task.hasClass('movable'));
       if (tween) tween.stop(true, true);                       // finish any layout animation first
       boxDrag = { t, rank, mx: e.clientX, my: e.clientY, x0: t.x, y0: t.y, moved: false, invalid: false };
       return;
@@ -2964,8 +3017,11 @@ $(function () {
       }
       if (plan) hideStatus();
       if (rank) {
-        // Pulled far sideways but not into or out of a phase: back to its place.
-        if (Math.abs(vertical ? t.y - y0 : t.x - x0) > (vertical ? t.h : t.w) / 2) { snapBoxBack(t, x0, y0); return; }
+        // Pulled far sideways but not into or out of a phase: into another column, or back to its place.
+        if (Math.abs(vertical ? t.y - y0 : t.x - x0) > (vertical ? t.h : t.w) / 2) {
+          if (e.type !== 'pointercancel' && moveToColumn(t)) changed(); else snapBoxBack(t, x0, y0);
+          return;
+        }
         if (e.type !== 'pointercancel' && reorderRank(t, { x: x0, y: y0, w: t.w, cy: t.cy })) changed();
         else snapBoxBack(t, x0, y0);
         return;
