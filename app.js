@@ -361,7 +361,9 @@ $(function () {
       $('<dt>').text(label),
       $('<dd>').toggleClass('undef', undef)
         .text(undef ? '—' : f.short)
-        .append(!undef && f.sub ? $('<span class="sub">').text(f.sub) : null)
+        // When times show their date below, an empty field keeps that line too,
+        // so all boxes are the same height and their bottom edges line up.
+        .append(!undef && f.sub ? $('<span class="sub">').text(f.sub) : undef && showDates ? $('<span class="sub">').html('&nbsp;') : null)
         .attr('title', undef ? 'Not set' : f.long)
     );
   }
@@ -901,6 +903,7 @@ $(function () {
   // for the frame and its name.
   const FRAME_PAD = 10, FRAME_LABEL = 24;
   function drawFrames() {
+    if (boxDrag && boxDrag.moved) return;   // frames hold still while a box is dragged into or out of them
     const open = [...folds.values()].filter(f => f.open && f.visible).sort((a, b) => a.members.size - b.members.size);
     const shown = shownNodes();
     open.forEach(f => {   // inner phases first
@@ -984,6 +987,59 @@ $(function () {
     dropFold(f);
     changed();
     showStatus(`Removed the phase “${f.name}”; what was in it stays`, { action: { label: 'Undo', run: undo } });
+  }
+
+  // ---- dragging a moment into or out of an open phase
+  // The innermost open phase whose frame is under the pointer.
+  function phaseAt(e) {
+    let best = null;
+    folds.forEach(f => {
+      if (!f.open || !f.visible) return;
+      const r = f.$frame[0].getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+      if (!best || f.members.size < best.members.size) best = f;
+    });
+    return best;
+  }
+  // Moment `id` dropped into phase `target` (null: outside every phase): it ends
+  // up in target and the phases around it, and leaves the others. Returns null
+  // when nothing changes, {error}, or {next: Map(phase -> new members), joined, left}.
+  function planPhaseMove(id, target) {
+    const want = new Set(target ? [...folds.values()].filter(f => f === target || contains(f, target.members)) : []);
+    const now = [...folds.values()].filter(f => f.members.has(id));
+    if (now.length === want.size && now.every(f => want.has(f))) return null;
+    const name = `“${tasks.get(id).name}”`;
+    const next = new Map();
+    for (const f of folds.values()) {
+      const ms = new Set(f.members);
+      if (want.has(f)) ms.add(id); else ms.delete(id);
+      if (ms.size) {
+        const extra = between(ms);
+        if (extra.has(id)) return { error: `${name} lies between moments of the phase “${f.name}”, so it stays in it` };
+        extra.forEach(x => ms.add(x));
+      }
+      next.set(f, ms);
+    }
+    const list = [...next].filter(([, ms]) => ms.size);
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const [f, a] = list[i], [g, b] = list[j];
+        const shared = [...a].filter(x => b.has(x)).length;
+        if (!shared) continue;
+        if (shared === a.size && shared === b.size) return { error: `That would make the phases “${f.name}” and “${g.name}” the same` };
+        if (shared !== a.size && shared !== b.size) return { error: `That would make the phase “${f.name}” cut across “${g.name}”` };
+      }
+    }
+    return { next, joined: [...want].filter(f => !now.includes(f)), left: now.filter(f => !want.has(f)) };
+  }
+  function applyPhaseMove(t, plan) {
+    plan.next.forEach((ms, f) => { if (ms.size) f.members = ms; else dropFold(f); });
+    t.pinned = null;   // laid out with the phase's other moments
+    changed();
+    const inner = list => list.sort((a, b) => a.members.size - b.members.size)[0];
+    showStatus(plan.joined.length ? `Moved “${t.name}” into the phase “${inner(plan.joined).name}”`
+                                  : `Took “${t.name}” out of the phase “${inner(plan.left).name}”`,
+               { action: { label: 'Undo', run: undo } });
   }
 
   // Group the picked boxes into a new, folded phase, with any moments that lie
@@ -2691,6 +2747,23 @@ $(function () {
     if (drop && target) showStatus(target.problem, { error: true });   // e.g. it would make a cycle
   }
 
+  // While dragging a moment: which phase it would join or leave if dropped here.
+  // The frame it would join turns green; a message says what would happen.
+  function trackPhaseDrop(e) {
+    const t = boxDrag.t, target = phaseAt(e);
+    const plan = planPhaseMove(t.id, target);
+    $world.find('.phase-frame.drop-into').removeClass('drop-into');
+    if (plan && !plan.error && target && plan.joined.length) target.$frame.addClass('drop-into');
+    const msg = !plan ? null : plan.error ? plan.error
+      : plan.joined.length ? `Drop to move “${t.name}” into the phase “${target.name}”`
+      : `Drop to take “${t.name}” out of the phase`;
+    if (msg !== boxDrag.msg) {
+      if (msg) showStatus(msg, { sticky: true, error: !!(plan && plan.error) }); else hideStatus();
+      boxDrag.msg = msg;
+    }
+    boxDrag.plan = plan;
+  }
+
   function pointerPair() {
     const [a, b] = [...pointers.values()];
     return { mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, dist: Math.hypot(a.x - b.x, a.y - b.y) || 1 };
@@ -2813,10 +2886,15 @@ $(function () {
       const t = boxDrag.t;
       boxDrag.moved = true;
       if (boxDrag.rank) {
+        // Along its column (row, when vertical) to reorder it; once pulled well
+        // sideways, anywhere, e.g. into or out of a phase's frame.
+        if (Math.abs(vertical ? dy : dx) * view.k > 30) boxDrag.free = true;
         freeMoving = t.id;
-        if (vertical) t.x = boxDrag.x0 + dx; else t.y = boxDrag.y0 + dy;
+        if (vertical || boxDrag.free) t.x = boxDrag.x0 + dx;
+        if (!vertical || boxDrag.free) t.y = boxDrag.y0 + dy;
         t.$el.css({ left: t.x, top: t.y }).addClass('dragging');
         drawEdges();
+        trackPhaseDrop(e);
         return;
       }
       t.x = boxDrag.x0 + dx;
@@ -2824,6 +2902,7 @@ $(function () {
       const others = shownNodes().filter(o => o !== t).map(o => rectAt(o, o));
       boxDrag.invalid = overlapsAny(rectAt(t, t), others);
       t.$el.css({ left: t.x, top: t.y }).addClass('dragging').toggleClass('drag-invalid', boxDrag.invalid);
+      trackPhaseDrop(e);
       return;
     }
 
@@ -2871,13 +2950,22 @@ $(function () {
     }
 
     if (boxDrag) {
-      const { t, moved, invalid, x0, y0, rank } = boxDrag;
+      const { t, moved, invalid, x0, y0, rank, plan } = boxDrag;
       boxDrag = null;
       t.$el.removeClass('dragging drag-invalid');
+      $world.find('.phase-frame.drop-into').removeClass('drop-into');
       if (!moved) return;
       suppressClick = true;                        // a drag is not a click on the box
       setTimeout(() => { suppressClick = false; }, 0);
+      if (plan && e.type === 'pointerup') {        // into or out of a phase
+        if (plan.error) { showStatus(plan.error, { error: true }); snapBoxBack(t, x0, y0); return; }
+        applyPhaseMove(t, plan);
+        return;
+      }
+      if (plan) hideStatus();
       if (rank) {
+        // Pulled far sideways but not into or out of a phase: back to its place.
+        if (Math.abs(vertical ? t.y - y0 : t.x - x0) > (vertical ? t.h : t.w) / 2) { snapBoxBack(t, x0, y0); return; }
         if (e.type !== 'pointercancel' && reorderRank(t, { x: x0, y: y0, w: t.w, cy: t.cy })) changed();
         else snapBoxBack(t, x0, y0);
         return;
