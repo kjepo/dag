@@ -625,7 +625,7 @@ $(function () {
     });
     folds.forEach(f => {
       const bad = [...f.members].filter(id => tasks.get(id).problems.length);
-      f.$el.toggleClass('conflict', bad.length > 0).attr('title', 'A phase: the moments from its first to its last, folded into one box. Click to unfold it.' +
+      f.$el.toggleClass('conflict', bad.length > 0).attr('title', 'A phase: moments folded into one box. Click to open it.' +
         (bad.length ? '\n\nDate conflict in ' + bad.map(id => `“${tasks.get(id).name}”`).join(', ') : ''));
     });
   }
@@ -2417,12 +2417,162 @@ $(function () {
     const el = e.target;
     if ($(el).is('input, textarea, select, [contenteditable]') && !(el === $input[0] && el.value === '')) return;
     e.preventDefault();
+    if ($timeline.prop('hidden')) toggleGantt(false);
     toggleTimeline($timeline.prop('hidden'));
   });
   $('#timeline-close').on('click', () => toggleTimeline(false));
   $timeline.on('click', e => { if (e.target === $timeline[0]) toggleTimeline(false); });
   $(document).on('keydown', e => {
     if (e.key === 'Escape' && !$timeline.prop('hidden')) { toggleTimeline(false); e.stopImmediatePropagation(); }
+  });
+
+  // ---------------------------------------------------------------- gantt chart
+  // The graph on a time axis: a phase is a bar from its first to its last
+  // moment, a moment a diamond. Rows nest like the phases, and mirror the graph:
+  // a folded phase is one row, an open one is followed by what's inside it.
+  const $gantt = $('#gantt');
+  const ganttLabel = () => window.innerWidth < 640 ? 140 : 240;   // the names column
+  let ganttZoom = 1;
+  // Everything in minutes; a date (days) covers its whole day.
+  function ganttSpan(a, b) {
+    return hourMode ? [a, b] : [a * MIN_PER_DAY, (b + 1) * MIN_PER_DAY];
+  }
+  function innermostPhase(ms) {
+    return [...folds.values()].filter(f => contains(f, ms)).sort((x, y) => x.members.size - y.members.size)[0] || null;
+  }
+  function ganttRows() {
+    const node = n => {
+      if (n.members) {
+        const ts = [...n.members].map(id => parseTime(tasks.get(id).time)).filter(v => v != null);
+        return { id: n.id, phase: n, name: n.name, notes: n.notes, a: ts.length ? Math.min(...ts) : null, b: ts.length ? Math.max(...ts) : null };
+      }
+      const v = parseTime(n.time);
+      return { id: n.id, task: n, name: n.name, notes: n.notes, a: v, b: v };
+    };
+    const kids = parent => [
+      ...[...folds.values()].filter(f => innermostPhase(f.members) === parent),
+      ...[...tasks.values()].filter(t => innermostPhase(new Set([t.id])) === parent),
+    ].map(node).sort((x, y) => (x.a ?? Infinity) - (y.a ?? Infinity) || (x.phase ? 0 : 1) - (y.phase ? 0 : 1) || x.name.localeCompare(y.name));
+    const rows = [];
+    const walk = (parent, depth) => kids(parent).forEach(r => {
+      rows.push({ ...r, depth });
+      if (r.phase && r.phase.open) walk(r.phase, depth + 1);
+    });
+    walk(null, 0);
+    return rows;
+  }
+  // Ticks for the axis: the smallest step that leaves room for its label.
+  function ganttTicks(lo, hi, px) {
+    const D = MIN_PER_DAY;
+    const steps = [...(hourMode ? [60, 180, 360, 720] : []), D, 2 * D, 7 * D, 'month', 'quarter', 'year'];
+    const width = st => (typeof st === 'number' ? st : st === 'month' ? 30.4 * D : st === 'quarter' ? 91 * D : 365 * D) * px;
+    const step = steps.find(st => width(st) >= 64) || 'year';
+    const ticks = [];
+    const date = m => new Date(m * 60000);
+    if (typeof step === 'number') {
+      // Weeks start on Monday (1970-01-05 was one).
+      const base = step === 7 * D ? 4 * D : 0;
+      for (let m = Math.ceil((lo - base) / step) * step + base; m <= hi; m += step) {
+        const d = date(m), midnight = m % D === 0;
+        ticks.push({ m, major: midnight && (step < D || d.getUTCDate() === 1),
+          label: step < D && !midnight ? clockTime(m) : shortDate(Math.floor(m / D)) });
+      }
+    } else {
+      const months = step === 'month' ? 1 : step === 'quarter' ? 3 : 12;
+      const d0 = date(lo);
+      let y = d0.getUTCFullYear(), mo = Math.ceil(d0.getUTCMonth() / months) * months;
+      for (;;) {
+        const m = Date.UTC(y, mo, 1) / 60000;
+        if (m > hi) break;
+        if (m >= lo) {
+          const d = date(m);
+          ticks.push({ m, major: d.getUTCMonth() === 0,
+            label: step === 'year' ? String(d.getUTCFullYear()) : MONTHS[d.getUTCMonth()] + (d.getUTCMonth() === 0 || !ticks.length ? ' ' + d.getUTCFullYear() : '') });
+        }
+        mo += months;
+      }
+    }
+    return ticks;
+  }
+  function buildGantt() {
+    const $chart = $('#gantt-chart').empty();
+    const GANTT_LABEL = ganttLabel();
+    const rows = ganttRows();
+    const spans = rows.filter(r => r.a != null).map(r => ganttSpan(r.a, r.b));
+    const undated = rows.filter(r => r.a == null && r.task).length;
+    $('#gantt-note').text(!rows.length ? 'Nothing to show yet: add some moments.'
+      : !spans.length ? 'No moment has a date yet, so there is nothing to put on the time axis.'
+      : undated ? `${undated === 1 ? 'One moment has' : `${undated} moments have`} no date: listed, but not on the axis.` : '');
+    if (!spans.length) return;
+    let lo = Math.min(...spans.map(s => s[0])), hi = Math.max(...spans.map(s => s[1]));
+    const pad = Math.max((hi - lo) * 0.04, hourMode ? 60 : MIN_PER_DAY);
+    lo -= pad; hi += pad;
+    const avail = Math.max(240, $gantt.find('.gantt-scroll')[0].clientWidth - GANTT_LABEL - 1);
+    const px = avail / (hi - lo) * ganttZoom;   // pixels per minute
+    const W = Math.floor((hi - lo) * px);
+    const x = m => (m - lo) * px;
+    // (A label that would stick out past the end is left off: it would widen the chart.)
+    const ticks = ganttTicks(lo, hi, px).filter(t => x(t.m) <= W - 44);
+    // The first date on the axis says the year, and so does every new year.
+    let lastYear = null;
+    ticks.forEach(t => {
+      const y = new Date(t.m * 60000).getUTCFullYear();
+      if (y !== lastYear && !/\d{4}/.test(t.label) && !/^\d\d:\d\d$/.test(t.label)) t.label += `, ${y}`;
+      if (!/^\d\d:\d\d$/.test(t.label)) lastYear = y;
+    });
+    $chart.css({ width: GANTT_LABEL + W, '--gantt-label': GANTT_LABEL + 'px' });
+    // Grid lines and today's line behind the rows.
+    const $grid = $('<div class="g-grid">').css({ left: GANTT_LABEL, width: W });
+    ticks.forEach(t => $grid.append($('<div class="g-line">').toggleClass('major', t.major).css('left', x(t.m))));
+    const now = new Date(), todayMin = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes()) / 60000;
+    if (todayMin > lo && todayMin < hi) $grid.append($('<div class="g-today" title="Today">').css('left', x(todayMin)));
+    const $axis = $('<div class="g-row g-axis">').append($('<div class="g-label">'),
+      $('<div class="g-track">').css('width', W).append(ticks.map(t => $('<span class="g-tick">').toggleClass('major', t.major).css('left', x(t.m)).text(t.label))));
+    $chart.append($grid, $axis);
+    const when = r => r.a == null ? 'No date' : timelineWhen(r.a, r.b);
+    rows.forEach(r => {
+      const $track = $('<div class="g-track">').css('width', W);
+      if (r.a != null) {
+        const [s, e] = ganttSpan(r.a, r.b);
+        if (r.phase) {
+          $track.append($('<div class="g-bar">').css({ left: x(s), width: Math.max(4, x(e) - x(s)) })
+            .toggleClass('critical', showCritical && r.phase.$el.hasClass('critical'))
+            .toggleClass('conflict', r.phase.$el.hasClass('conflict')));
+        } else {
+          const mid = hourMode ? s : (s + e) / 2;
+          $track.append($('<div class="g-diamond">').css('left', x(mid))
+            .toggleClass('critical', showCritical && r.task.$el.hasClass('critical'))
+            .toggleClass('conflict', r.task.$el.hasClass('conflict')));
+        }
+      }
+      const $label = $('<div class="g-label">').css('padding-left', 10 + r.depth * 16).append(
+        r.phase ? $('<span class="g-mark">').text(r.phase.open ? '▾' : '▸') : null,
+        $('<span class="g-name">').text(r.name));
+      $chart.append($('<div class="g-row">').toggleClass('g-phase', !!r.phase).toggleClass('g-undated', r.a == null)
+        .attr('title', `${r.name} · ${when(r)}${r.notes && r.notes.trim() ? '\n\n' + r.notes : ''}`)
+        .append($label, $track)
+        .on('click', () => { toggleGantt(false); if (r.phase) openPhaseProps(r.id); else openProps(r.id); }));
+    });
+  }
+  function toggleGantt(show) {
+    $gantt.prop('hidden', !show);
+    if (show) { ganttZoom = 1; buildGantt(); }
+  }
+  $('#gantt-btn').on('click', () => toggleGantt(true));
+  $('#gantt-close').on('click', () => toggleGantt(false));
+  $('#gantt-zoom-in').on('click', () => { ganttZoom = Math.min(ganttZoom * 1.5, 40); buildGantt(); });
+  $('#gantt-zoom-out').on('click', () => { ganttZoom = Math.max(ganttZoom / 1.5, 1); buildGantt(); });
+  $gantt.on('click', e => { if (e.target === $gantt[0]) toggleGantt(false); });
+  $(window).on('resize', () => { if (!$gantt.prop('hidden')) buildGantt(); });
+  $(document).on('keydown', e => {
+    if (e.key === 'Escape' && !$gantt.prop('hidden')) { toggleGantt(false); e.stopImmediatePropagation(); return; }
+    // ⇧G opens (and closes) it, unless something is being typed.
+    if (e.key !== 'G' || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+    const el = e.target;
+    if ($(el).is('input, textarea, select, [contenteditable]') && !(el === $input[0] && el.value === '')) return;
+    e.preventDefault();
+    if ($gantt.prop('hidden')) toggleTimeline(false);
+    toggleGantt($gantt.prop('hidden'));
   });
 
   // ---------------------------------------------------------------- pan & zoom

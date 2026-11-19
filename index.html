@@ -49,6 +49,7 @@
         <button id="redo" type="button" role="menuitem" disabled>Redo <kbd>⇧⌘Z · Ctrl Y</kbd></button>
         <hr>
         <button id="timeline-btn" type="button" role="menuitem">Timeline <kbd>⇧T</kbd></button>
+        <button id="gantt-btn" type="button" role="menuitem">Gantt chart <kbd>⇧G</kbd></button>
         <button id="insert-after" type="button" role="menuitem">Split… <kbd>/</kbd></button>
         <button id="direction-menu" type="button" role="menuitem" class="narrow-only">Switch to vertical layout</button>
         <button id="reset-order" type="button" role="menuitem">Reset box order</button>
@@ -80,6 +81,20 @@
       <button id="timeline-close" type="button" aria-label="Close timeline">×</button>
       <h2 id="timeline-title">Timeline</h2>
       <ol id="timeline-list"></ol>
+    </div>
+  </div>
+  <div id="gantt" hidden>
+    <div class="gantt-panel" role="dialog" aria-labelledby="gantt-title">
+      <header>
+        <h2 id="gantt-title">Gantt chart</h2>
+        <span class="gantt-tools">
+          <button id="gantt-zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+          <button id="gantt-zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+          <button id="gantt-close" type="button" class="props-close" aria-label="Close Gantt chart">×</button>
+        </span>
+      </header>
+      <div class="gantt-scroll"><div id="gantt-chart"></div></div>
+      <p id="gantt-note" class="hint"></p>
     </div>
   </div>
   <div id="help" hidden>
@@ -116,6 +131,8 @@
 
       <h3>Timeline</h3>
       <p><b>Timeline</b> in the ☰ menu (or <kbd>⇧</kbd><kbd>T</kbd> with the text field empty) lists the graph in date order, as it is shown: each moment with its name and notes, and each phase with its name and its first to last date. A folded phase is one line; an open phase has its line, and its moments follow. Moments without a date are listed at the end. Click a moment to open it. Close with <b>×</b>, <kbd>Esc</kbd>, <kbd>⇧</kbd><kbd>T</kbd>, or a click outside.</p>
+      <h3>Gantt chart</h3>
+      <p><b>Gantt chart</b> in the ☰ menu (or <kbd>⇧</kbd><kbd>G</kbd> with the text field empty) puts the graph on a time axis: each phase is a bar from its first to its last moment, each moment a diamond on its date. Rows nest like the phases and follow the graph: a folded phase is one row, an open one is followed by what is inside it. Critical (when shown) and conflicting ones are <b class="orange">orange</b> and <b class="red">red</b>; a red line marks today. <b>+</b> and <b>−</b> zoom the time axis (scroll sideways when it is wider than the window). Hover a row for its dates and notes; click it to open its properties. Close with <b>×</b>, <kbd>Esc</kbd>, <kbd>⇧</kbd><kbd>G</kbd>, or a click outside.</p>
       <h3>Phases</h3>
       <p>Any moments can be grouped into a <b>phase</b>, like “Judging”, shown as a single box. Pick the boxes: <kbd>Shift</kbd>-click them (or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>-click) with a mouse, or on a touch screen <b>press and hold</b> one box, then tap the others. Picked boxes get a blue outline; click or tap one again to unpick it. A bar at the bottom shows how many are picked: <b>Group to phase</b> makes the phase and lets you type its name right in the box, <b>Cancel</b> (or <kbd>Esc</kbd>, or a click on the background) unpicks them all. A moment that lies on a path between two picked moments goes into the phase too, so a phase never has arcs going out and coming back in; the same happens when a later arc puts a moment between two of its moments. The box looks like a stack of cards. A badge on top says how many moments it holds; the box shows its start and end: the earliest and latest date inside. It turns <b class="orange">orange</b> or <b class="red">red</b> when a moment inside is critical or in conflict. Connect arcs to it as to any box: an arc to it goes to each of its first moments, an arc from it leaves from each of its last ones, so the whole phase comes after (or before) the other moment.</p>
       <p>Click a phase’s box to <b>open</b> it: its moments come out and stay together inside a dashed frame with the phase’s name on top, so you can see which moments belong to it and edit them. Click <b>▾</b> before the name to fold them back into one box. <b>Double-click</b> the name, on the frame or on the folded box, to rename the phase right there, as with a moment’s name: type, then <kbd>Enter</kbd> (or click elsewhere) to keep it, or <kbd>Esc</kbd> to cancel. The <b>×</b> after the name removes the phase and keeps its moments. The <b>✎</b> after the name, on the frame or in the folded box, opens the phase’s properties: its name and <b>notes</b>. A phase with notes shows the note icon (hover over the name to read them), and the timeline shows its notes. To add a moment to an open phase, <b>drag</b> it onto the frame (pull it sideways first if it has arcs; the frame turns green), and drop it. Drag a moment out of its frame and drop it outside to take it out of the phase. A folded phase’s box can be dragged the same way, taking all its moments along, and slid up or down (left or right, when vertical) to reorder it among the boxes next to it. A moment that lies between two others of the phase has to stay in it. Phases, open or folded, are saved with the graph.</p>
