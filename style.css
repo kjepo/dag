@@ -856,7 +856,15 @@ html, body {
 .task.fold.conflict {
   box-shadow: 0 0 0 2px #cf222e, 5px 5px 0 0 #fff, 5px 5px 0 2px #cf222e;
 }
-.task.fold .fold-mark { margin-right: 6px; color: #8c959f; }
+.task.fold .fold-open {
+  border: 0; background: none; padding: 0 4px; margin: 0 2px 0 -4px; border-radius: 4px;
+  font: inherit; color: #57606a; cursor: pointer;
+}
+.task.fold .fold-open:hover { color: #0969da; background: rgba(9,105,218,.1); }
+.task.fold.selected {
+  box-shadow: 0 0 0 2px #0969da, 5px 5px 0 0 #fff, 5px 5px 0 2px #0969da;
+}
+.phase-frame.selected { border: 2px solid #0969da; }
 .task.fold .fold-count {
   /* On the top border, like a moment's slack, so the name row is as tall as a
      moment's and the boxes line up. */

@@ -625,7 +625,7 @@ $(function () {
     });
     folds.forEach(f => {
       const bad = [...f.members].filter(id => tasks.get(id).problems.length);
-      f.$el.toggleClass('conflict', bad.length > 0).attr('title', 'A phase: moments folded into one box. Click to open it.' +
+      f.$el.toggleClass('conflict', bad.length > 0).attr('title', 'A phase: moments folded into one box. Click to select it; ▸ opens it.' +
         (bad.length ? '\n\nDate conflict in ' + bad.map(id => `“${tasks.get(id).name}”`).join(', ') : ''));
     });
   }
@@ -818,7 +818,7 @@ $(function () {
   function createFold({ id, name, notes = '', members, open = false }) {
     const f = { id, name: name || defaultPhaseName(members), notes: typeof notes === 'string' ? notes : '', members, open, x: 0, y: 0, o: 0, visible: true };
     f.$el = $('<div class="task fold">').attr('data-id', id)
-      .attr('title', 'A phase: moments folded into one box. Click to open it.').append(
+      .attr('title', 'A phase: moments folded into one box. Click to select it; ▸ opens it.').append(
         $('<div class="conn conn-in" title="Click, then pick a green connector: the whole phase comes after that moment">'),
         $('<div class="name">'),
         $('<dl class="fields">'),
@@ -888,7 +888,7 @@ $(function () {
     if (!nameEdit || !f.$el[0].contains(nameEdit.el)) {   // not while it's being renamed in its box
       const hasNotes = !!(f.notes && f.notes.trim());
       f.$el.find('.name').empty().append(
-        $('<span class="fold-mark" aria-hidden="true">▸</span>'),
+        $('<button type="button" class="fold-open" title="Open the phase" aria-label="Open the phase">▸</button>'),
         document.createTextNode(f.name),
         hasNotes ? $('<span class="note-icon" aria-label="Has notes">').html(NOTE_ICON) : null,
         $('<button type="button" class="fold-edit" title="Name and notes" aria-label="Phase properties">✎</button>'),
@@ -2254,15 +2254,15 @@ $(function () {
   }
   $('#insert-after').on('click', insertAfterSelected);
 
-  // Delete or Backspace deletes the picked boxes, or the moment in the
-  // properties panel, unless something is being typed.
+  // Delete or Backspace deletes the picked boxes, or the moment (or phase, with
+  // its moments) in the properties panel, unless something is being typed.
   $(document).on('keydown', e => {
     if (e.key !== 'Delete' && e.key !== 'Backspace' || e.metaKey || e.ctrlKey || e.altKey) return;
     const el = e.target;
     if ($(el).is('input, textarea, select, [contenteditable]') && !(el === $input[0] && el.value === '')) return;
-    if (!picked.size && !selectedId) return;
+    if (!picked.size && !selectedId && !phaseSel) return;
     e.preventDefault();
-    deleteBoxes(picked.size ? [...picked] : [selectedId]);
+    deleteBoxes(picked.size ? [...picked] : [selectedId || phaseSel]);
   });
 
   // "!" toggles the critical path, unless it's being typed into a field.
@@ -2791,11 +2791,16 @@ $(function () {
     if (picked.size) clearPicks();
     if (pending) cancelPending();
     phaseSel = id;
+    const f = folds.get(id);
+    f.$el.addClass('selected');
+    f.$frame.addClass('selected');
     $phaseProps.prop('hidden', false);
     fillPhaseProps();
   }
   function closePhaseProps() {
     if (!phaseSel) return;
+    const f = folds.get(phaseSel);
+    if (f) { f.$el.removeClass('selected'); f.$frame.removeClass('selected'); }
     phaseSel = null;
     $phaseProps.prop('hidden', true);
     focusInput();
@@ -2988,7 +2993,9 @@ $(function () {
     ids.forEach(id => membersOf(id).forEach(m => { if (tasks.has(m)) ms.add(m); }));
     if (!ms.size) return;
     const names = [...ms].map(id => `“${tasks.get(id).name}”`);
-    const title = ms.size === 1 ? `Delete ${names[0]}?` : `Delete ${ms.size} moments?`;
+    const phase = ids.length === 1 && folds.get(ids[0]);
+    const title = phase ? `Delete the phase “${phase.name}” and its ${ms.size === 1 ? 'moment' : `${ms.size} moments`}?`
+      : ms.size === 1 ? `Delete ${names[0]}?` : `Delete ${ms.size} moments?`;
     const list = ms.size === 1 ? '' : (names.length > 4 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` :
       `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`) + '. ';
     const bridges = bridgeArcs(ms);
@@ -3004,6 +3011,7 @@ $(function () {
       text: list + ([...ms].some(hasEdges) ? 'Their arcs are removed too. ' : '') + 'Undo brings it back.' })) return;
     if ([...ms].some(id => !tasks.has(id))) return;   // changed while asking
     if (selectedId && ms.has(selectedId)) closeProps();
+    if (phaseSel && [...folds.get(phaseSel).members].every(id => ms.has(id))) closePhaseProps();
     if (pending) cancelPending();
     clearPicks();
     edges.filter(e => ms.has(e.from) || ms.has(e.to)).forEach(e => e.el.remove());
@@ -3047,21 +3055,24 @@ $(function () {
       .map(b => ({ from: b.from, to: b.to, wait: b.w === plain ? null : durationValue(b.w) }));
   }
 
-  let phaseOpenTimer = null;
-  const PHASE_OPEN_DELAY = 250;
   $world.on('click', '.task', function (e) {
-    if (suppressClick || $(e.target).closest('.conn, [contenteditable], .fold-edit').length) return;
+    if (suppressClick || $(e.target).closest('.conn, [contenteditable], .fold-edit, .fold-open').length) return;
     const id = $(this).attr('data-id');
     // Shift/⌘/Ctrl-click picks a box for a phase; while boxes are picked, a plain click (or tap) does too.
-    if (e.shiftKey || e.metaKey || e.ctrlKey || picked.size) { clearTimeout(phaseOpenTimer); togglePick(id); return; }
-    if (folds.has(id)) {
-      // Open a folded phase after a moment's pause, so that a double-click can
-      // rename it instead (the second click cancels the opening).
-      clearTimeout(phaseOpenTimer);
-      if (e.detail <= 1) phaseOpenTimer = setTimeout(() => expandFold(id), PHASE_OPEN_DELAY);
-      return;
-    }
+    if (e.shiftKey || e.metaKey || e.ctrlKey || picked.size) { togglePick(id); return; }
+    // A click selects, a moment or a folded phase alike; only ▸ opens a phase.
+    if (folds.has(id)) { openPhaseProps(id); return; }
     openProps(id);
+  });
+  $world.on('click', '.fold-open', function (e) {
+    e.stopPropagation();
+    if (!suppressClick && !picked.size) expandFold($(this).closest('.task').attr('data-id'));
+  });
+  $world.on('dblclick', '.fold-open', e => e.stopPropagation());   // not a rename
+  // An open phase is selected by clicking its name on the frame.
+  $world.on('click', '.phase-name', function () {
+    if (suppressClick || nameEdit && nameEdit.el === this) return;
+    openPhaseProps($(this).closest('.phase-frame').attr('data-phase'));
   });
   // An open phase's frame: ▾ folds it back, × removes the phase.
   $world.on('click', '.phase-fold', function (e) {
@@ -3074,7 +3085,6 @@ $(function () {
   });
   $world.on('click', '.fold-edit', function (e) {
     e.stopPropagation();
-    clearTimeout(phaseOpenTimer);
     if (!suppressClick) openPhaseProps($(this).closest('.task').attr('data-id'));
   });
   $world.on('dblclick', '.fold-edit', e => e.stopPropagation());   // not a rename
@@ -3119,7 +3129,6 @@ $(function () {
   });
   // A phase: the name on its frame (open), or in its box (folded).
   $world.on('dblclick', '.phase-name, .task.fold .name', function () {
-    clearTimeout(phaseOpenTimer);
     const f = folds.get($(this).closest('.phase-frame').attr('data-phase') || $(this).closest('.task').attr('data-id'));
     if (f && !picked.size) startNameEdit(this, f.name, phaseNameSaver(f));
   });
@@ -3380,7 +3389,6 @@ $(function () {
         if (!longPress || boxDrag && boxDrag.moved) return;
         longPress.fired = true;
         boxDrag = null;
-        clearTimeout(phaseOpenTimer);
         if (!picked.has(id)) togglePick(id);
         if (navigator.vibrate) navigator.vibrate(15);
       }, LONG_PRESS) };
