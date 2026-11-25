@@ -1192,9 +1192,10 @@ $(function () {
   // Order of boxes without arcs: undated moments first, in the order they were
   // added, then dated moments, by time and name.
   function looseOrder(list) {
-    const undated = list.filter(t => !isDated(t));
-    const dated = list.filter(isDated).sort((a, b) =>
-      (parseTime(a.time) ?? 0) - (parseTime(b.time) ?? 0) || a.name.localeCompare(b.name));
+    const when = n => parseTime(tasks.has(n.id) ? n.time : n.start);   // a phase: when it starts
+    const undated = list.filter(t => when(t) == null);
+    const dated = list.filter(t => when(t) != null).sort((a, b) =>
+      when(a) - when(b) || a.name.localeCompare(b.name));
     return [...undated, ...dated];
   }
 
@@ -1215,7 +1216,9 @@ $(function () {
     return level;
   }
 
-  function dotSource(hints = []) {
+  // keep(id): which shown boxes to lay out (an open phase moved by hand is laid out on its own).
+  function dotSource(hints = [], keep = () => true) {
+    const nodes = shownNodes().filter(n => keep(n.id));
     const q = s => '"' + s + '"';
     const lines = [
       'digraph G {',
@@ -1228,10 +1231,10 @@ $(function () {
     ];
     // Boxes without arcs all get the same size, so layout() can shuffle them
     // between their slots to put them in date order.
-    const loose = shownNodes().filter(t => !t.pinned && isLoose(t));
+    const loose = nodes.filter(t => !t.pinned && isLoose(t));
     const looseW = Math.max(0, ...loose.map(t => t.w));
     const looseH = Math.max(0, ...loose.map(t => vertical ? t.h : layoutHeight(t)));
-    shownNodes().forEach(t => {
+    nodes.forEach(t => {
       if (t.pinned) return;   // placed by hand, not by graphviz
       // Horizontal: graphviz lines nodes up by their centres. Give each node a height
       // that is symmetric around the divider, so the dividers (where the arcs attach) line up.
@@ -1240,23 +1243,25 @@ $(function () {
       const h = loosely ? looseH : vertical ? t.h : layoutHeight(t);
       lines.push(`  ${q(t.id)} [width=${(w / 72).toFixed(3)}, height=${(h / 72).toFixed(3)}];`);
     });
-    nodeEdges().forEach(([from, to]) => lines.push(`  ${q(from)} -> ${q(to)};`));
+    nodeEdges().forEach(([from, to]) => { if (keep(from) && keep(to)) lines.push(`  ${q(from)} -> ${q(to)};`); });
     // Each open phase is a cluster, which keeps its moments together and other
     // boxes out, with a margin and a label that leave room for its frame.
     // Graphviz refuses a node that is both in a cluster and in a rank set
     // reaching outside it, so rank sets and order hints are kept per cluster.
     // Phases nest, and so do their clusters. A box belongs to the innermost
     // open phase around it ('' for none).
-    const openPhases = [...folds.values()].filter(f => f.open && f.visible).sort((x, y) => x.members.size - y.members.size);
+    const openPhases = [...folds.values()].filter(f => f.open && f.visible && nodes.some(n => contains(f, membersOf(n.id))))
+      .sort((x, y) => x.members.size - y.members.size);
     const innermost = ms => (openPhases.find(f => contains(f, ms)) || { id: '' }).id;
     const clusterOf = id => innermost(membersOf(id));
     const groups = new Map();   // cluster id ('' for none) -> lines inside it
     const add = (c, line) => { if (!groups.has(c)) groups.set(c, []); groups.get(c).push(line); };
-    shownNodes().forEach(n => { const c = clusterOf(n.id); if (c) add(c, `${q(n.id)};`); });
+    nodes.forEach(n => { const c = clusterOf(n.id); if (c && !n.pinned) add(c, `${q(n.id)};`); });
     // Each moment as early as its predecessors allow: same rank for all moments at the
     // same depth (longest path from a moment with no predecessors).
     const levels = new Map();   // "cluster|level" -> ids
     earliestLevels().forEach((lvl, id) => {
+      if (!keep(id)) return;
       const k = clusterOf(id) + '|' + lvl;
       if (!levels.has(k)) levels.set(k, []);
       levels.get(k).push(q(id));
@@ -1264,7 +1269,7 @@ $(function () {
     levels.forEach((ids, k) => { if (ids.length > 1) add(k.split('|')[0], `{ rank=same; ${ids.join('; ')}; }`); });
     // The user's order within a rank: invisible arcs between boxes kept in the same rank.
     hints.forEach(([a, b]) => {
-      if (clusterOf(a) !== clusterOf(b)) return;
+      if (!keep(a) || !keep(b) || clusterOf(a) !== clusterOf(b)) return;
       const [x, y] = flatReversed[vertical ? 'v' : 'h'] ? [b, a] : [a, b];
       add(clusterOf(a), `{ rank=same; ${q(x)} -> ${q(y)} [style=invis]; }`);
     });
@@ -1309,16 +1314,45 @@ $(function () {
 
   // Does box `id` (a task or a fold) have arcs to other boxes?
   function hasEdges(id) { return edges.some(e => !isInternal(e) && (nodeOf(e.from) === id || nodeOf(e.to) === id)); }
-  // A task box without arcs: laid out in date order in the free slots, and movable by hand.
-  function isLoose(n) { return tasks.has(n.id) && !hasEdges(n.id); }
+  // A box without arcs (a moment or a folded phase): laid out in date order in
+  // the free slots, and movable by hand.
+  function isLoose(n) { return !hasEdges(n.id); }
+  // A phase with no arcs between its moments and any outside it.
+  function loosePhase(f) { return !edges.some(e => f.members.has(e.from) !== f.members.has(e.to)); }
+  // An open phase that can be dragged by its name: loose, and not inside another phase.
+  function movablePhase(f) {
+    return f.open && f.visible && loosePhase(f) && ![...folds.values()].some(g => contains(g, f.members));
+  }
+  // An open phase moved by hand (f.pinned: its frame's top left corner) is laid
+  // out on its own and put there; the shown boxes inside it.
+  function pinnedPhases() { return [...folds.values()].filter(f => f.pinned && movablePhase(f)); }
+  function boxesIn(f) { return shownNodes().filter(n => contains(f, membersOf(n.id))); }
 
-  // Boxes without arcs can be dragged; once they get an arc, graphviz places them again.
+  // Boxes without arcs can be dragged; once they get an arc, graphviz places them
+  // again. The same goes for open phases without arcs to the outside.
   function updateMovable() {
+    folds.forEach(f => {
+      if (!loosePhase(f) || f.open && !movablePhase(f)) delete f.pinned;
+      f.$el.toggleClass('movable', loosePhase(f));
+      f.$frame.toggleClass('movable', movablePhase(f));
+    });
+    // Moments in a phase that was moved by hand go where the phase goes.
+    const grouped = new Set(pinnedPhases().flatMap(f => [...f.members]));
     tasks.forEach((t, id) => {
       const movable = !hasEdges(id);
-      if (!movable) delete t.pinned;
+      if (!movable || grouped.has(id)) delete t.pinned;
       t.$el.toggleClass('movable', movable);
     });
+  }
+  // Where the frame of open phase f would be with its boxes at pos (id -> {x, y}),
+  // as drawFrames() draws it.
+  function frameAt(f, pos) {
+    const rects = boxesIn(f).filter(n => pos[n.id]).map(n => rectAt(n, pos[n.id]));
+    folds.forEach(g => { if (g.open && g.visible && contains(f, g.members)) { const r = frameAt(g, pos); if (r) rects.push(r); } });
+    if (!rects.length) return null;
+    const x0 = Math.min(...rects.map(r => r.x)), y0 = Math.min(...rects.map(r => r.y));
+    const x1 = Math.max(...rects.map(r => r.x + r.w)), y1 = Math.max(...rects.map(r => r.y + r.h));
+    return { x: x0 - FRAME_PAD, y: y0 - FRAME_PAD - FRAME_LABEL, w: x1 - x0 + 2 * FRAME_PAD, h: y1 - y0 + 2 * FRAME_PAD + FRAME_LABEL };
   }
 
   // Which way graphviz lays out an arc within a rank, per direction ('h', 'v'):
@@ -1353,17 +1387,20 @@ $(function () {
     vizReady.then(viz => {
       if (seq !== layoutSeq) return;            // a newer layout was requested
       const render = src => JSON.parse(viz.renderString(src, { format: 'json' }));
-      let g = render(dotSource());
+      const groups = pinnedPhases().map(f => ({ f, ids: new Set(boxesIn(f).map(n => n.id)) }));
+      const grouped = new Set(groups.flatMap(gr => [...gr.ids]));
+      const main = id => !grouped.has(id);
+      let g = render(dotSource([], main));
       if (orderHints.length) {
         // Keep only hints whose boxes still share a rank (arcs may have moved
         // them apart), then lay out again with them.
         detectFlatOrder(viz);
         const r = ranksOf(g);
         const before = orderHints.length;
-        orderHints = orderHints.filter(([a, b]) =>
+        orderHints = orderHints.filter(([a, b]) => grouped.has(a) && grouped.has(b) ||   // laid out on their own below
           r.has(a) && r.has(b) && r.get(a) === r.get(b) && hasEdges(a) && hasEdges(b));
         if (orderHints.length !== before) saveLocal();
-        if (orderHints.length) g = render(dotSource(orderHints));
+        if (orderHints.length) g = render(dotSource(orderHints, main));
       }
       rankOf.clear();
       ranksOf(g).forEach((k, id) => rankOf.set(id, k));
@@ -1433,8 +1470,42 @@ $(function () {
       // Hand-placed boxes stay put, unless the new layout now covers them;
       // then they move to the nearest free spot.
       const placed = Object.keys(targets).map(id => rectAt(nodeObj(id), targets[id]));
-      tasks.forEach(t => {
-        if (!t.pinned || foldOf.has(t.id)) return;
+      // An open phase moved by hand: laid out on its own, then moved so its frame is where it was left.
+      groups.forEach(({ f, ids }) => {
+        const sub = render(dotSource(orderHints, id => ids.has(id)));
+        ranksOf(sub).forEach((k, id) => rankOf.set(id, `${f.id}:${k}`));
+        const H2 = parseFloat(sub.bb.split(',')[3]);
+        const pos = {}, subRoutes = {};
+        const names = new Map((sub.objects || []).map(o => [o._gvid, o.name]));
+        (sub.objects || []).forEach(o => {
+          const n = nodeObj(o.name);
+          if (!n || !o.pos) return;
+          const [cx, cy] = o.pos.split(',').map(Number);
+          pos[o.name] = { x: cx - n.w / 2, y: (H2 - cy) - (vertical ? n.h / 2 : n.cy) };
+        });
+        boxesIn(f).forEach(n => { if (n.pinned && !pos[n.id]) pos[n.id] = n.pinned; });
+        (sub.edges || []).forEach(ge => {
+          if (ge.style === 'invis' || !ge.pos) return;
+          const toks = ge.pos.split(/\s+/);
+          const flip = tok => { const [x, y] = tok.split(',').map(Number); return [x, H2 - y]; };
+          const tipTok = toks.find(tok => tok.startsWith('e,'));
+          const pts = toks.filter(tok => !/^[se],/.test(tok)).map(flip);
+          if (pts.length >= 4 && (pts.length - 1) % 3 === 0) subRoutes[`${names.get(ge.tail)}>${names.get(ge.head)}`] = { pts, tip: tipTok ? flip(tipTok.slice(2)) : null };
+        });
+        const fr = frameAt(f, pos);
+        if (!fr) return;
+        const spot = freeSpot(fr, f.pinned, placed);
+        f.pinned = spot;
+        const dx = spot.x - fr.x, dy = spot.y - fr.y;
+        Object.entries(pos).forEach(([id, p]) => { targets[id] = { x: p.x + dx, y: p.y + dy }; });
+        Object.entries(subRoutes).forEach(([key, r]) => {
+          const mv = pt => [pt[0] + dx, pt[1] + dy];
+          routes[key] = { pts: r.pts.map(mv), tip: r.tip ? mv(r.tip) : null };
+        });
+        placed.push({ ...fr, x: spot.x, y: spot.y });
+      });
+      shownNodes().forEach(t => {
+        if (!t.pinned || grouped.has(t.id)) return;
         t.pinned = freeSpot(t, t.pinned, placed);
         targets[t.id] = t.pinned;
         placed.push(rectAt(t, t.pinned));
@@ -1607,7 +1678,8 @@ $(function () {
       })),
       edges: edges.map(e => ({ from: e.from, to: e.to, ...(e.wait != null ? { wait: e.wait } : {}) })),
       ...(orderHints.length ? { order: orderHints.map(h => [...h]) } : {}),
-      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, ...(f.notes ? { notes: f.notes } : {}), members: [...f.members], ...(f.open ? { open: true } : {}), ...(f.col ? { col: f.col } : {}) })) } : {}),
+      ...(folds.size ? { folds: [...folds.values()].map(f => ({ id: f.id, name: f.name, ...(f.notes ? { notes: f.notes } : {}), members: [...f.members], ...(f.open ? { open: true } : {}), ...(f.col ? { col: f.col } : {}),
+        ...(f.pinned ? { pos: { x: Math.round(f.pinned.x), y: Math.round(f.pinned.y) } } : {}) })) } : {}),
     };
   }
 
@@ -1750,6 +1822,7 @@ $(function () {
         if (nestProblem(ms)) return;   // cutting across another phase: show its moments
         const fold = createFold({ id: f.id, name: typeof f.name === 'string' && f.name.trim() ? f.name : null, notes: f.notes, members: ms, open: f.open === true });
         if (Number.isInteger(f.col) && f.col > 0) fold.col = f.col;
+        if (f.pos && isFinite(f.pos.x) && isFinite(f.pos.y)) fold.pinned = { x: +f.pos.x, y: +f.pos.y };
         const was = opts.prev && opts.prev.get(f.id);
         if (was) {
           Object.assign(fold, { x: was.x, y: was.y, o: 1 });
@@ -2070,7 +2143,7 @@ $(function () {
   function toggleMenu(open) {
     if (open === undefined) open = $menu.prop('hidden');
     $menu.prop('hidden', !open);
-    if (open) $('#insert-after').prop('disabled', !splitTarget()).attr('title', splitTarget() ? null : 'Select one moment first');
+    if (open) $('#insert-after').prop('disabled', !splitTarget()).attr('title', splitTarget() ? null : 'Pick only one moment, or none for the newest');
     $menuBtn.attr('aria-expanded', String(open)).toggleClass('active', open);
   }
   $menuBtn.on('click', () => toggleMenu());
@@ -2121,13 +2194,23 @@ $(function () {
   // "/": a new moment right after the selected one (or else the newest). The
   // selected moment keeps its incoming arcs; the new one comes after it and
   // takes over the outgoing arcs, so it slots in between. It has no time yet.
+  // The usual split turns a moment into something that lasts a while, so the
+  // new name defaults to "X ends". Keeping it renames the original "X begins"
+  // and groups the two into an open phase named "X", so its two ends can be
+  // linked to apart; folded, it is one box showing when X begins and ends.
   async function insertAfter(t) {
+    const spanned = / (begins|ends)$/.test(t.name);   // already one end of a span
+    const suggested = spanned ? '' : `${t.name} ends`;
     const name = await askText({
       title: `Split “${t.name}”?`,
-      text: 'A new moment comes right after it, and the moments that came after it now come after the new one. Name the new moment:',
-      value: '', confirm: 'Split',
+      text: 'A new moment comes right after it, and the moments that came after it now come after the new one. Name the new moment' +
+        (suggested ? ` (keep “${suggested}” to make “${t.name}” a phase from “${t.name} begins” to “${suggested}”):` : ':'),
+      value: suggested, confirm: 'Split',
     });
     if (name == null || !tasks.has(t.id) || foldOf.has(t.id)) return;
+    const oldName = t.name;
+    const span = !!suggested && name.trim() === suggested;
+    if (span) t.name = `${oldName} begins`;
     const id = 't' + nextId++;
     createTask({ id, name: name.trim(), locked: t.locked, noOut: t.noOut });   // the new one is now the last
     t.noOut = false;
@@ -2135,10 +2218,17 @@ $(function () {
     edges.forEach(x => { if (x.from === t.id) x.from = id; });
     addEdge(t.id, id);
     orderHints = orderHints.filter(h => !h.includes(t.id));
+    // The new moment belongs to the phases the original is in, so that the
+    // phase of the two nests inside them.
+    folds.forEach(g => { if (g.members.has(t.id)) g.members.add(id); });
+    const pair = new Set([t.id, id]);
+    if (span && !nestProblem(pair)) createFold({ id: 'f' + nextFoldId++, name: oldName, members: pair, open: true });
     focusId = id;
     if (pending) cancelPending();
     changed();
-    showStatus(`Split “${t.name}”: “${name.trim()}” comes right after it`, { action: { label: 'Undo', run: undo } });
+    showStatus(span ? `“${oldName}” is now a phase from “${t.name}” to “${name.trim()}”; ▾ folds it into one box`
+                    : `Split “${oldName}”: “${name.trim()}” comes right after it`,
+               { action: { label: 'Undo', run: undo } });
   }
   $(document).on('keydown', e => {
     if (e.key !== '/' || e.metaKey || e.ctrlKey) return;
@@ -2147,15 +2237,18 @@ $(function () {
     e.preventDefault();
     insertAfterSelected();
   });
-  // Split, also in the ☰ menu: only with exactly one moment selected (shown in
-  // the panel, or the only box picked).
+  // Split, also in the ☰ menu: the selected moment (shown in the panel, or the
+  // only box picked), or else the newest one, so that typing "Foundation",
+  // Enter, / splits what was just added without selecting it first.
   function splitTarget() {
     if (selectedId && !picked.size) return tasks.get(selectedId) || null;
-    return picked.size === 1 ? tasks.get([...picked][0]) || null : null;
+    if (picked.size) return picked.size === 1 ? tasks.get([...picked][0]) || null : null;
+    const newest = [...tasks.values()].sort((x, y) => parseInt(y.id.slice(1), 10) - parseInt(x.id.slice(1), 10))[0];
+    return newest && !foldOf.has(newest.id) ? newest : null;
   }
   function insertAfterSelected() {
     const t = splitTarget();
-    if (!t) { showStatus('Select one moment to split', { error: true }); return; }
+    if (!t) { showStatus(picked.size ? 'Pick only one moment to split' : 'Add a moment to split first', { error: true }); return; }
     if (picked.size) clearPicks();
     insertAfter(t);
   }
@@ -3125,6 +3218,7 @@ $(function () {
   // background pans, one on a box without arcs moves it, two fingers pinch-zoom.
   const pointers = new Map();   // pointerId -> {x, y} for pointers down on the canvas
   let boxDrag = null;           // moving a box
+  let frameDrag = null;         // moving an open phase by its name, with everything in it
   let drag = null;              // panning
   let pinch = null;             // two-finger zoom
   let connDrag = null;          // dragging a new arc out of a connector
@@ -3195,6 +3289,27 @@ $(function () {
     return { mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, dist: Math.hypot(a.x - b.x, a.y - b.y) || 1 };
   }
 
+  // Drop a phase being moved by its name (ok: false puts it back). It stays
+  // where it is dropped, unless that is on top of another box.
+  function endFrameDrag(ok) {
+    const { f, boxes, start, moved, invalid, splines } = frameDrag;
+    frameDrag = null;
+    f.$frame.removeClass('drag-invalid');
+    if (!moved) return;
+    suppressClick = true;   // a drag is not a click on the background
+    setTimeout(() => { suppressClick = false; }, 0);
+    if (ok && !invalid) {
+      const fr = frameAt(f, Object.fromEntries(boxes.map(n => [n.id, n])));
+      f.pinned = { x: fr.x, y: fr.y };
+      changed();
+      return;
+    }
+    if (invalid && ok) showStatus('A phase can’t be placed on top of another box', { error: true });
+    boxes.forEach((n, i) => { n.x = start[i].x; n.y = start[i].y; n.$el.css({ left: n.x, top: n.y }); });
+    splinesOn = splines;
+    drawEdges();
+  }
+
   function snapBoxBack(t, x0, y0) {
     const x1 = t.x, y1 = t.y;
     freeMoving = t.id;
@@ -3213,8 +3328,11 @@ $(function () {
   $canvas.on('pointerdown', ev => {
     const e = ev.originalEvent;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    // A phase's label, and a name being edited, handle their own pointer input.
-    if ($(e.target).closest('.phase-label, [contenteditable]').length) return;
+    // A phase's label, and a name being edited, handle their own pointer input,
+    // except that a movable phase is dragged by its name (see below).
+    const $t = $(e.target);
+    if ($t.closest('[contenteditable], .phase-label button').length) return;
+    if ($t.closest('.phase-label').length && !$t.closest('.phase-frame.movable').length) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointers.size === 2) {
@@ -3228,6 +3346,7 @@ $(function () {
         if (moved) snapBoxBack(t, x0, y0);
         boxDrag = null;
       }
+      if (frameDrag) endFrameDrag(false);
       drag = null;
       if (viewTween) viewTween.stop(true, true);
       const p = pointerPair();
@@ -3244,6 +3363,15 @@ $(function () {
       return;
     }
     if ($(e.target).closest('.edge').length) return;   // handled by its click handler
+    // An open phase without arcs to the outside moves, with all of it, by its name.
+    const $label = $(e.target).closest('.phase-frame.movable .phase-label');
+    if ($label.length && !$(e.target).closest('button').length) {
+      const f = folds.get($label.closest('.phase-frame').attr('data-phase'));
+      if (tween) tween.stop(true, true);
+      const boxes = boxesIn(f);
+      frameDrag = { f, boxes, start: boxes.map(n => ({ x: n.x, y: n.y })), mx: e.clientX, my: e.clientY, moved: false, splines: splinesOn };
+      return;
+    }
     const $task = $(e.target).closest('.task');
     if ($task.length && e.pointerType !== 'mouse') {
       // Press and hold (touch or pen): pick the box for a phase.
@@ -3262,7 +3390,7 @@ $(function () {
       if (!t) return;
       // Boxes without arcs move freely; connected ones (and folded phases) slide
       // along their rank to reorder it, or are pulled sideways into or out of a phase.
-      const rank = !(tasks.has(t.id) && $task.hasClass('movable'));
+      const rank = !$task.hasClass('movable');
       if (tween) tween.stop(true, true);                       // finish any layout animation first
       boxDrag = { t, rank, mx: e.clientX, my: e.clientY, x0: t.x, y0: t.y, moved: false, invalid: false };
       return;
@@ -3304,6 +3432,24 @@ $(function () {
         $canvas.addClass('linking');
       }
       moveConnDrag(e);
+      return;
+    }
+
+    if (frameDrag) {
+      const dx = (e.clientX - frameDrag.mx) / view.k, dy = (e.clientY - frameDrag.my) / view.k;
+      if (!frameDrag.moved && Math.hypot(dx, dy) * view.k < 4) return;
+      frameDrag.moved = true;
+      splinesOn = false;   // graphviz's routes are left behind; simple curves until it lays out again
+      frameDrag.boxes.forEach((n, i) => {
+        n.x = frameDrag.start[i].x + dx;
+        n.y = frameDrag.start[i].y + dy;
+        n.$el.css({ left: n.x, top: n.y });
+      });
+      const fr = frameAt(frameDrag.f, Object.fromEntries(frameDrag.boxes.map(n => [n.id, n])));
+      const inside = new Set(frameDrag.boxes);
+      frameDrag.invalid = !!fr && overlapsAny(fr, shownNodes().filter(o => !inside.has(o)).map(o => rectAt(o, o)));
+      frameDrag.f.$frame.toggleClass('drag-invalid', frameDrag.invalid);
+      drawEdges();
       return;
     }
 
@@ -3375,6 +3521,8 @@ $(function () {
       connDrag = null;
       return;
     }
+
+    if (frameDrag) { endFrameDrag(e.type === 'pointerup'); return; }
 
     if (boxDrag) {
       const { t, moved, invalid, x0, y0, rank, plan } = boxDrag;

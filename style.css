@@ -135,6 +135,8 @@ html, body {
   pointer-events: none;   /* the background still pans */
 }
 .phase-frame[hidden] { display: none; }
+.phase-frame.movable .phase-name { cursor: grab; }   /* no arcs to the outside: drag it by its name */
+.phase-frame.drag-invalid { border-color: #cf222e; }
 .phase-frame.drop-into { border-color: #1a7f37; border-style: solid; background: rgba(45,164,78,.08); }   /* a dragged moment would join it */
 .phase-label {
   position: absolute;
