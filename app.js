@@ -2503,12 +2503,14 @@ $(function () {
     if (show) buildTimeline();   // once shown, so the dates can be measured
   }
   $('#timeline-btn').on('click', () => toggleTimeline(true));
-  // Shift+T opens (and closes) it, unless something is being typed. (A plain t
-  // starts a new moment's name in the text field.)
+  // ⌥T (Alt+T) opens (and closes) it. Not a letter alone: the text field for
+  // new moments nearly always has focus, and a name may start with T. By key
+  // position (e.code), since ⌥ changes the letter on a Mac; also while typing a
+  // new moment's name, but not in other fields, where ⌥T may be meant as text.
   $(document).on('keydown', e => {
-    if (e.key !== 'T' || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.code !== 'KeyT' || !e.altKey || e.metaKey || e.ctrlKey) return;
     const el = e.target;
-    if ($(el).is('input, textarea, select, [contenteditable]') && !(el === $input[0] && el.value === '')) return;
+    if ($(el).is('input, textarea, select, [contenteditable]') && el !== $input[0]) return;
     e.preventDefault();
     if ($timeline.prop('hidden')) toggleGantt(false);
     toggleTimeline($timeline.prop('hidden'));
@@ -2659,10 +2661,10 @@ $(function () {
   $(window).on('resize', () => { if (!$gantt.prop('hidden')) buildGantt(); });
   $(document).on('keydown', e => {
     if (e.key === 'Escape' && !$gantt.prop('hidden')) { toggleGantt(false); e.stopImmediatePropagation(); return; }
-    // ⇧G opens (and closes) it, unless something is being typed.
-    if (e.key !== 'G' || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+    // ⌥G (Alt+G) opens (and closes) it, as ⌥T does the timeline.
+    if (e.code !== 'KeyG' || !e.altKey || e.metaKey || e.ctrlKey) return;
     const el = e.target;
-    if ($(el).is('input, textarea, select, [contenteditable]') && !(el === $input[0] && el.value === '')) return;
+    if ($(el).is('input, textarea, select, [contenteditable]') && el !== $input[0]) return;
     e.preventDefault();
     if ($gantt.prop('hidden')) toggleTimeline(false);
     toggleGantt($gantt.prop('hidden'));
